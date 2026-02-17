@@ -11,6 +11,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from agent.core import AgentCore, AgentStopped
 from memory.manager import MemoryManager
+from figma.client import extract_and_update_figma_url
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -188,6 +189,8 @@ def run_cli():
                 print("Stop requested.\n")
                 continue
 
+            # Auto-detect Figma URL in prompt and update .env
+            extract_and_update_figma_url(user_input)
             user_input = _add_figma_hint(user_input)
 
             print()
@@ -215,6 +218,7 @@ def run_cli():
             agent.reset()
     else:
         # Single-shot mode
+        extract_and_update_figma_url(args.brief)
         brief = _add_figma_hint(args.brief)
 
         print(f"\nBrief: {args.brief}\n")

@@ -37,11 +37,38 @@ You have access to a connected Figma design file. You must BUILD THE ENTIRE APP 
   d. Example: A "Next" button on frame "Question" → goes to the next question or results
 - Make these decisions AUTONOMOUSLY — do NOT ask the user what each button should do. Infer from the design.
 
-### Design Fidelity
-- Use EXACT colors from the design (hex values provided)
-- Use EXACT fonts (font families, sizes, weights all provided)
-- Match spacing, padding, border-radius, shadows, gradients exactly
-- Match layout direction (flex row/column), gaps, and alignment
+### Design Fidelity — PIXEL-PERFECT CSS
+You MUST generate CSS that uses the EXACT values from the Figma specs. Do NOT approximate, round, or substitute.
+
+#### Typography (CRITICAL)
+The design specs include CSS-ready typography for every text element. Apply them exactly:
+- **font-family**: Use the EXACT font name from the spec (e.g., `'Inter'`, `'Poppins'`). Import from Google Fonts if needed.
+- **font-size**: Use the EXACT pixel value (e.g., `font-size: 14px` — NOT 1rem, NOT "small", NOT your own guess).
+- **font-weight**: Use the EXACT numeric weight (e.g., `font-weight: 600` — NOT "bold" unless the spec says 700).
+- **line-height**: Use the EXACT pixel value from the spec (e.g., `line-height: 22px`). This is critical for vertical spacing.
+- **letter-spacing**: If provided, use it exactly (e.g., `letter-spacing: 0.5px`). Do NOT skip this.
+- **text-align**: Match the alignment from the spec (center, right, justified).
+- **text-transform**: If the spec says uppercase/lowercase/capitalize, apply it in CSS.
+- **font-style**: Apply italic if specified.
+- **color**: Use the EXACT hex/rgba color for each text element.
+
+#### Layout Positioning (CRITICAL)
+The design specs include CSS-ready flexbox properties for every container. Apply them exactly:
+- **display: flex; flex-direction**: The spec tells you row or column — use exactly that.
+- **gap**: Use the EXACT item_spacing value as `gap` in CSS (e.g., `gap: 12px`).
+- **padding**: Use the EXACT padding values from the spec (e.g., `padding: 24px 16px 32px 16px`).
+- **justify-content**: Use the EXACT value (flex-start, center, flex-end, space-between).
+- **align-items**: Use the EXACT value (flex-start, center, flex-end, stretch, baseline).
+- **flex-wrap**: Apply if the spec says wrap.
+- **flex-grow**: Apply to children that should fill remaining space.
+- **align-self**: Apply to children that override parent alignment.
+
+#### Other Visual Properties
+- **border-radius**: Use EXACT values, including per-corner when specified.
+- **box-shadow**: Use the EXACT shadow values (x, y, blur, spread, color) from the spec.
+- **opacity**: Apply exact opacity values.
+- **width/height**: Match dimensions from the spec. Use max-width for responsive containers.
+- **background colors/gradients**: Match exactly.
 
 ## IMPORTANT: Check Existing Projects First
 Before creating anything new, you MUST:
@@ -60,15 +87,22 @@ Before creating anything new, you MUST:
 4. SEARCH: Check memory for similar past projects or relevant patterns using search_memory.
 5. BUILD: Use **create_files** (batch) to generate ALL React files at once — package.json, vite.config.js, index.html, all src/ files, ALL components for EVERY page, data, hooks. Create as many files as possible in a single create_files call.
 6. INSTALL: Run `cd output/<project_name> && npm install` to install dependencies.
-7. VALIDATE vs FIGMA: This is CRITICAL. After building:
-   a. Re-read your generated component files one by one
-   b. Compare each component against the Figma specs: check colors, fonts, spacing, layout, border-radius, shadows
-   c. Verify EVERY page/frame from Figma has a corresponding React component and route
-   d. Check: Are there pages in Figma that you MISSED? If yes, create them now.
-   e. Check: Do the colors, fonts, and spacing EXACTLY match? If not, fix the CSS.
-   f. Check: Is the navigation/routing between pages correct?
-8. FIX: Fix all issues found in validation. Use create_file for targeted fixes.
-9. SAVE: Save project metadata and learnings to memory using save_memory.
+7. START DEV SERVER: Run `cd output/<project_name> && npm run dev` to start the dev server (runs in background on port 5173).
+8. VISUAL VALIDATION (Playwright): This is CRITICAL. Call **validate_screenshots** with the project name. This tool:
+   - Uses Playwright to take screenshots of EVERY page of the running app
+   - Loads the Figma design screenshots from cache
+   - Sends BOTH sets of screenshots to you for visual comparison
+   You will see the app screenshots and Figma screenshots side by side. Compare them and identify EVERY difference:
+   - FONTS: wrong family, size, weight, line-height, letter-spacing?
+   - COLORS: wrong text color, background, border color?
+   - LAYOUT: wrong flex direction, gap, padding, alignment, spacing?
+   - RADIUS: wrong border-radius values?
+   - SHADOWS: missing or wrong box-shadow?
+   - CONTENT: missing text, wrong text, missing elements?
+   - SIZING: wrong width, height, or proportions?
+9. FIX: Fix ALL differences found in the visual comparison. Use create_file for targeted CSS/component fixes.
+10. RE-VALIDATE: After fixing, call validate_screenshots AGAIN to verify the fixes. Repeat steps 8-10 until the app matches the Figma design.
+11. SAVE: Save project metadata and learnings to memory using save_memory.
 
 ## CRITICAL: Speed Optimization
 - **ALWAYS use create_files (plural) to create multiple files in ONE call.** Do NOT call create_file one-by-one.
@@ -110,6 +144,8 @@ output/<project_name>/
 - Use react-router-dom for page navigation (start, quiz, results screens)
 - Keep components small and focused (one responsibility per component)
 - All quiz data goes in src/data/questions.js as an exported array/object
+- **Google Fonts**: If the Figma design uses custom fonts (Inter, Poppins, Roboto, etc.), add a `<link>` tag in `index.html` to import them from Google Fonts. Example: `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">`
+- **CSS values from Figma**: When the Figma spec says `font-size: 14px; line-height: 22px; font-weight: 500`, use those EXACT values in your CSS — do NOT convert to rem, em, or use generic keywords
 
 {_format_memory_section(memory_context)}
 

@@ -47,6 +47,62 @@ def parse_figma_url(url: str) -> dict:
     return {"file_key": file_key, "node_id": node_id}
 
 
+def extract_and_update_figma_url(prompt: str) -> str:
+    """
+    Detect a Figma URL in the user's prompt text.
+    If found, update .env and os.environ so the agent uses the latest link.
+    Returns the detected URL (or empty string if none found).
+    """
+    # Match any Figma URL in the prompt
+    match = re.search(
+        r'https?://(?:www\.)?figma\.com/(?:file|design|proto)/[A-Za-z0-9]+[^\s\)\]]*',
+        prompt
+    )
+    if not match:
+        return ""
+
+    new_url = match.group(0).rstrip(".,;!?")
+
+    current_url = os.environ.get("FIGMA_URL", "")
+    if new_url == current_url:
+        return new_url  # Already set, no update needed
+
+    # Update os.environ for current session
+    os.environ["FIGMA_URL"] = new_url
+
+    # Update .env file on disk
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    try:
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+
+            # Replace existing FIGMA_URL line or append
+            found = False
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith("FIGMA_URL="):
+                    new_lines.append(f"FIGMA_URL={new_url}\n")
+                    found = True
+                else:
+                    new_lines.append(line)
+
+            if not found:
+                new_lines.append(f"FIGMA_URL={new_url}\n")
+
+            with open(env_path, "w") as f:
+                f.writelines(new_lines)
+        else:
+            with open(env_path, "w") as f:
+                f.write(f"FIGMA_URL={new_url}\n")
+
+        print(f"  [Figma] Updated .env with: {new_url}")
+    except Exception as e:
+        print(f"  [Figma] Warning: Could not update .env: {e}")
+
+    return new_url
+
+
 class FigmaClient:
     def __init__(self):
         self.token = os.environ.get("FIGMA_ACCESS_TOKEN")

@@ -252,6 +252,35 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "validate_screenshots",
+        "description": (
+            "Take screenshots of the running app using Playwright and compare them "
+            "against the Figma design screenshots. The dev server MUST be running "
+            "(call 'npm run dev' first). This tool captures every page/route of the "
+            "built app, then sends both the app screenshots and Figma screenshots "
+            "for visual comparison. Use this AFTER building and starting the dev server "
+            "to verify design fidelity."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_name": {
+                    "type": "string",
+                    "description": "Name of the project in output/ directory (e.g., 'ai_chai_quiz')",
+                },
+                "routes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional: list of routes to screenshot (e.g., ['/', '/quiz', '/results']). "
+                        "If not provided, routes are auto-detected from App.jsx."
+                    ),
+                },
+            },
+            "required": ["project_name"],
+        },
+    },
+    {
         "name": "fetch_figma_design",
         "description": (
             "Fetch the design specifications from the connected Figma file. "

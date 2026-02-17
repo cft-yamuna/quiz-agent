@@ -12,6 +12,31 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _dev_server_proc = None
 _dev_server_project = None
 
+
+def _kill_all_dev_servers():
+    """Kill dev servers tracked by BOTH this module and the executor module."""
+    global _dev_server_proc, _dev_server_project
+
+    # 1. Kill our own tracked process
+    if _dev_server_proc and _dev_server_proc.poll() is None:
+        try:
+            _dev_server_proc.terminate()
+            _dev_server_proc.wait(timeout=5)
+        except Exception:
+            try:
+                _dev_server_proc.kill()
+            except Exception:
+                pass
+    _dev_server_proc = None
+    _dev_server_project = None
+
+    # 2. Kill the executor's tracked process + anything on port 5173
+    try:
+        from tools.executor import kill_dev_server
+        kill_dev_server()
+    except ImportError:
+        pass
+
 app = Flask(
     __name__,
     template_folder=os.path.join(os.path.dirname(__file__), "templates"),
@@ -92,6 +117,10 @@ def build():
     prompt = data.get("prompt", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
+
+    # Auto-detect Figma URL in prompt and update .env
+    from figma.client import extract_and_update_figma_url
+    extract_and_update_figma_url(prompt)
 
     # Add Figma hint if configured
     figma_url = os.environ.get("FIGMA_URL", "")
@@ -209,22 +238,8 @@ def stop_build():
 @app.route("/api/stop-server", methods=["POST"])
 def stop_server():
     """Stop the currently running dev server."""
-    global _dev_server_proc, _dev_server_project
-
-    if _dev_server_proc and _dev_server_proc.poll() is None:
-        try:
-            _dev_server_proc.terminate()
-            _dev_server_proc.wait(timeout=5)
-        except Exception:
-            try:
-                _dev_server_proc.kill()
-            except Exception:
-                pass
-        _dev_server_proc = None
-        _dev_server_project = None
-        return jsonify({"status": "stopped"})
-
-    return jsonify({"status": "not running"})
+    _kill_all_dev_servers()
+    return jsonify({"status": "stopped"})
 
 
 @app.route("/api/run/<project_name>", methods=["POST"])
@@ -245,16 +260,8 @@ def run_project(project_name):
             "message": f"Static project. Open output/{project_name}/index.html directly.",
         })
 
-    # Kill previous dev server if running
-    if _dev_server_proc and _dev_server_proc.poll() is None:
-        try:
-            _dev_server_proc.terminate()
-            _dev_server_proc.wait(timeout=5)
-        except Exception:
-            try:
-                _dev_server_proc.kill()
-            except Exception:
-                pass
+    # Kill ALL previous dev servers (ours + executor's + anything on port 5173)
+    _kill_all_dev_servers()
 
     # Check if node_modules exists, install if not
     if not os.path.isdir(os.path.join(project_dir, "node_modules")):
@@ -288,9 +295,17 @@ def run_project(project_name):
 
 @app.route("/api/running", methods=["GET"])
 def get_running():
-    """Check if a dev server is currently running."""
+    """Check if a dev server is currently running (ours or executor's)."""
+    # Check our own tracked process
     if _dev_server_proc and _dev_server_proc.poll() is None:
         return jsonify({"running": True, "project": _dev_server_project, "url": "http://localhost:5173"})
+    # Also check the executor's tracked process (agent may have started one during build)
+    try:
+        from tools.executor import _dev_server_proc as exec_proc, _dev_server_project as exec_project
+        if exec_proc and exec_proc.poll() is None:
+            return jsonify({"running": True, "project": exec_project, "url": "http://localhost:5173"})
+    except ImportError:
+        pass
     return jsonify({"running": False})
 
 

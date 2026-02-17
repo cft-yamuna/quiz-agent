@@ -118,7 +118,7 @@ class AgentCore:
                     print(f"  -> ERROR: {e}")
                     result = f"ERROR: {str(e)}"
 
-                # Check if result contains Figma image paths
+                # Check if result contains image paths (Figma or validation screenshots)
                 result_str = str(result)
                 if "__FIGMA_IMAGES__:" in result_str:
                     marker = result_str.split("__FIGMA_IMAGES__:")[1].strip()
@@ -129,6 +129,15 @@ class AgentCore:
                             print(f"  -> Loaded Figma screenshot: {os.path.basename(img_path)}")
                     # Remove the marker from the result text
                     result_str = result_str.split("__FIGMA_IMAGES__:")[0].strip()
+
+                if "__VALIDATION_IMAGES__:" in result_str:
+                    marker = result_str.split("__VALIDATION_IMAGES__:")[1].strip()
+                    image_paths = [p.strip() for p in marker.split(",") if p.strip()]
+                    for img_path in image_paths:
+                        if os.path.exists(img_path):
+                            figma_images.append(img_path)
+                            print(f"  -> Loaded validation screenshot: {os.path.basename(img_path)}")
+                    result_str = result_str.split("__VALIDATION_IMAGES__:")[0].strip()
 
                 function_response_parts.append(
                     types.Part.from_function_response(
@@ -142,22 +151,104 @@ class AgentCore:
                 print("  Build stopped by user.")
                 raise AgentStopped("Build stopped by user.")
 
-            # If we have Figma images, send them alongside the function responses
-            # so Gemini can actually SEE the design
+            # If we have images (Figma or validation), send them alongside function responses
+            # so Gemini can actually SEE the designs
             if figma_images:
                 all_parts = list(function_response_parts)
-                for img_path in figma_images:
-                    try:
-                        img = Image.open(img_path)
-                        all_parts.append(img)
-                    except Exception as e:
-                        print(f"  -> Could not load image {img_path}: {e}")
-                all_parts.append(types.Part.from_text(
-                    "Above are the actual Figma design screenshots. "
-                    "Replicate this visual design EXACTLY — match the colors, "
-                    "fonts, spacing, layout, border radius, shadows, and overall look. "
-                    "The generated quiz app must look like these screenshots."
-                ))
+
+                # Separate app screenshots from Figma screenshots by path
+                app_imgs = [p for p in figma_images if "validation_screenshots" in p]
+                figma_only = [p for p in figma_images if "validation_screenshots" not in p]
+
+                has_both = app_imgs and figma_only
+
+                if has_both:
+                    # PAIRED COMPARISON: send Figma→App pairs page by page
+                    # The validator sends them alternating: figma, app, figma, app, ...
+                    all_parts.append(types.Part.from_text(
+                        text="PAGE-BY-PAGE COMPARISON: For each page below, "
+                        "the FIRST image is the FIGMA DESIGN (target) and "
+                        "the SECOND image is the APP (what was built)."
+                    ))
+
+                    pair_num = 0
+                    i = 0
+                    while i < len(figma_images):
+                        img_path = figma_images[i]
+                        is_figma = "validation_screenshots" not in img_path
+                        is_app = "validation_screenshots" in img_path
+
+                        # Check if this is a paired sequence (figma then app)
+                        if is_figma and i + 1 < len(figma_images) and "validation_screenshots" in figma_images[i + 1]:
+                            pair_num += 1
+                            all_parts.append(types.Part.from_text(
+                                text=f"--- PAGE {pair_num} ---"
+                            ))
+                            # Figma image
+                            try:
+                                img = Image.open(img_path)
+                                all_parts.append(img)
+                                all_parts.append(types.Part.from_text(
+                                    text=f"[FIGMA TARGET] {os.path.basename(img_path)}"
+                                ))
+                            except Exception as e:
+                                print(f"  -> Could not load image {img_path}: {e}")
+                            # App image
+                            try:
+                                img = Image.open(figma_images[i + 1])
+                                all_parts.append(img)
+                                all_parts.append(types.Part.from_text(
+                                    text=f"[APP ACTUAL] {os.path.basename(figma_images[i + 1])}"
+                                ))
+                            except Exception as e:
+                                print(f"  -> Could not load image {figma_images[i + 1]}: {e}")
+                            i += 2
+                        else:
+                            # Unpaired image
+                            label = "FIGMA (unpaired)" if is_figma else "APP (extra page)"
+                            try:
+                                img = Image.open(img_path)
+                                all_parts.append(img)
+                                all_parts.append(types.Part.from_text(
+                                    text=f"[{label}] {os.path.basename(img_path)}"
+                                ))
+                            except Exception as e:
+                                print(f"  -> Could not load image {img_path}: {e}")
+                            i += 1
+
+                    all_parts.append(types.Part.from_text(
+                        text="For EACH page pair above, compare FIGMA TARGET vs APP ACTUAL. "
+                        "List EVERY difference you find:\n"
+                        "1. FONTS: wrong family, size, weight, line-height, letter-spacing?\n"
+                        "2. COLORS: wrong text color, background, border color?\n"
+                        "3. LAYOUT: wrong flex direction, gap, padding, alignment, spacing?\n"
+                        "4. RADIUS: wrong border-radius values?\n"
+                        "5. SHADOWS: missing or wrong box-shadow?\n"
+                        "6. CONTENT: missing text, wrong text, missing elements?\n"
+                        "7. SIZING: wrong width, height, or proportions?\n"
+                        "8. MISSING PAGES: any Figma frames without an app page?\n\n"
+                        "Fix EVERY difference using create_file, then call validate_screenshots again."
+                    ))
+                elif figma_only:
+                    # Initial build — just show Figma frames to replicate
+                    all_parts.append(types.Part.from_text(
+                        text="--- FIGMA DESIGN SCREENSHOTS (replicate these EXACTLY) ---"
+                    ))
+                    for img_path in figma_only:
+                        try:
+                            img = Image.open(img_path)
+                            all_parts.append(img)
+                            all_parts.append(types.Part.from_text(
+                                text=f"Figma frame: {os.path.basename(img_path)}"
+                            ))
+                        except Exception as e:
+                            print(f"  -> Could not load image {img_path}: {e}")
+                    all_parts.append(types.Part.from_text(
+                        text="Above are the Figma design screenshots. "
+                        "Replicate this design EXACTLY — match colors, fonts, "
+                        "spacing, layout, border radius, shadows, and overall look."
+                    ))
+
                 current_input = all_parts
             else:
                 current_input = function_response_parts

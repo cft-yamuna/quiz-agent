@@ -13,6 +13,10 @@ _memory = None
 _planner = None
 _ask_user_fn = None  # Callback for getting user input
 
+# Track the running dev server so we can kill it before starting a new one
+_dev_server_proc = None
+_dev_server_project = None
+
 
 def set_dependencies(memory, planner, ask_user_fn=None):
     """Called by AgentCore to inject shared instances."""
@@ -41,6 +45,7 @@ def execute_tool(name: str, inputs: dict) -> str:
         "ask_user": _handle_ask_user,
         "check_existing_projects": _handle_check_existing_projects,
         "fetch_figma_design": _handle_fetch_figma_design,
+        "validate_screenshots": _handle_validate_screenshots,
     }
 
     handler = handlers.get(name)
@@ -99,26 +104,113 @@ def _handle_list_files(inputs: dict) -> str:
     return "\n".join(entries) if entries else "(empty directory)"
 
 
+def _resolve_project_cwd(command: str) -> str:
+    """Extract project directory from 'cd output/xxx && ...' commands.
+    Returns the absolute project path if found, otherwise BASE_DIR.
+    """
+    import re
+    match = re.search(r'cd\s+(output[/\\]\S+)', command)
+    if match:
+        rel_path = match.group(1).replace("\\", "/")
+        abs_path = os.path.join(BASE_DIR, rel_path)
+        if os.path.isdir(abs_path):
+            return abs_path
+    return BASE_DIR
+
+
+def _kill_port(port=5173):
+    """Kill any process listening on the given port (Windows + Unix)."""
+    import platform
+    try:
+        if platform.system() == "Windows":
+            result = subprocess.run(
+                f'netstat -ano | findstr :{port} | findstr LISTENING',
+                shell=True, capture_output=True, text=True
+            )
+            killed_pids = set()
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.split()
+                    pid = parts[-1]
+                    if pid.isdigit() and pid not in killed_pids:
+                        subprocess.run(f'taskkill /F /PID {pid}', shell=True,
+                                       capture_output=True)
+                        killed_pids.add(pid)
+                        print(f"  [Dev Server] Killed process {pid} on port {port}")
+        else:
+            result = subprocess.run(
+                f'lsof -ti :{port}', shell=True, capture_output=True, text=True
+            )
+            for pid in result.stdout.strip().split('\n'):
+                if pid.strip().isdigit():
+                    subprocess.run(f'kill -9 {pid}', shell=True, capture_output=True)
+                    print(f"  [Dev Server] Killed process {pid} on port {port}")
+    except Exception:
+        pass
+
+
+def kill_dev_server():
+    """Kill the currently running dev server (public, used by web/server.py too)."""
+    global _dev_server_proc, _dev_server_project
+    if _dev_server_proc and _dev_server_proc.poll() is None:
+        try:
+            _dev_server_proc.terminate()
+            _dev_server_proc.wait(timeout=5)
+        except Exception:
+            try:
+                _dev_server_proc.kill()
+            except Exception:
+                pass
+        old_project = _dev_server_project
+        _dev_server_proc = None
+        _dev_server_project = None
+        print(f"  [Dev Server] Killed tracked server ({old_project})")
+    # Also kill anything else on port 5173 (e.g. server started by another module)
+    _kill_port(5173)
+
+
+def _kill_dev_server():
+    """Internal alias — calls the public kill_dev_server."""
+    kill_dev_server()
+
+
 def _handle_run_command(inputs: dict) -> str:
+    global _dev_server_proc, _dev_server_project
+
     command = validate_command(inputs["command"])
     cmd_lower = command.lower().strip()
 
+    # Resolve the project directory from the command (e.g., "cd output/my_quiz && ...")
+    project_cwd = _resolve_project_cwd(command)
+
+    # Strip the "cd output/xxx && " prefix since we set cwd directly
+    import re
+    clean_command = re.sub(r'^cd\s+\S+\s*&&\s*', '', command).strip()
+
     # Detect long-running dev server commands — run in background
     bg_patterns = ["npm run dev", "npm start", "npx vite", "npm run preview"]
-    is_bg = any(cmd_lower.endswith(p) or (f"&& {p}" in cmd_lower) for p in bg_patterns)
+    is_bg = any(p in cmd_lower for p in bg_patterns)
 
     if is_bg:
+        # Kill any previous dev server first
+        _kill_dev_server()
+
+        # Extract project name for tracking
+        project_name = os.path.basename(project_cwd) if project_cwd != BASE_DIR else "unknown"
+
         try:
-            subprocess.Popen(
-                command,
+            _dev_server_proc = subprocess.Popen(
+                clean_command,
                 shell=True,
-                cwd=BASE_DIR,
+                cwd=project_cwd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            _dev_server_project = project_name
+            print(f"  [Dev Server] Started for '{project_name}' (cwd: {project_cwd})")
             return (
-                f"Started '{command}' in background. "
-                f"Dev server should be running at http://localhost:5173"
+                f"Started dev server for '{project_name}' in background (cwd: {project_cwd}). "
+                f"Dev server running at http://localhost:5173"
             )
         except Exception as e:
             return f"ERROR: Could not start background process: {e}"
@@ -128,12 +220,12 @@ def _handle_run_command(inputs: dict) -> str:
 
     try:
         result = subprocess.run(
-            command,
+            clean_command,
             shell=True,
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=BASE_DIR,
+            cwd=project_cwd,
         )
         output = ""
         if result.stdout:
@@ -290,6 +382,31 @@ def _handle_check_existing_projects(inputs: dict) -> str:
     return "\n".join(lines)
 
 
+def _handle_validate_screenshots(inputs: dict) -> str:
+    """Take app screenshots with Playwright and pair with Figma screenshots for comparison."""
+    from tools.screenshot_validator import validate
+
+    project_name = inputs.get("project_name", "")
+    if not project_name:
+        return "ERROR: project_name is required"
+
+    project_dir = os.path.join(BASE_DIR, "output", project_name)
+    if not os.path.isdir(project_dir):
+        return f"ERROR: Project '{project_name}' not found in output/"
+
+    routes = inputs.get("routes", None)
+
+    result = validate(project_name, routes)
+    report = result["report"]
+    image_paths = result["image_paths"]
+
+    # Append image marker so agent core can send images to Gemini vision
+    if image_paths:
+        report += "\n\n__VALIDATION_IMAGES__:" + ",".join(image_paths)
+
+    return report
+
+
 def _handle_fetch_figma_design(inputs: dict) -> str:
     token = os.environ.get("FIGMA_ACCESS_TOKEN")
     figma_url = os.environ.get("FIGMA_URL") or os.environ.get("FIGMA_FILE_KEY")
@@ -342,12 +459,28 @@ def _handle_fetch_figma_design(inputs: dict) -> str:
     # Append image paths so the agent core can send them to Gemini vision
     if image_paths:
         specs += "\n\n## Frame Screenshots (sent as images for visual reference)\n"
+        frame_manifest = []
         for frame in frames[:10]:
             if frame["id"] in image_paths:
                 path = image_paths[frame["id"]]
                 specs += f"  - {frame['name']} ({frame['page']}): {path}\n"
+                frame_manifest.append({
+                    "id": frame["id"],
+                    "name": frame.get("name", ""),
+                    "page": frame.get("page", ""),
+                    "image_path": path,
+                })
         # Mark with special tag for agent core to detect
         specs += "\n__FIGMA_IMAGES__:" + ",".join(image_paths.values())
+
+        # Save frame manifest so the validator knows which frames are current
+        import json
+        manifest_path = os.path.join(BASE_DIR, "figma", "cache", "_current_frames.json")
+        try:
+            with open(manifest_path, "w") as f:
+                json.dump(frame_manifest, f, indent=2)
+        except Exception:
+            pass
 
     # Truncate if too large
     if len(specs) > 15000:
