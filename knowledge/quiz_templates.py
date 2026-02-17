@@ -2,7 +2,7 @@ TRIVIA_TEMPLATE = {
     "type": "trivia",
     "description": "Multiple-choice with right/wrong answers and scoring",
     "structure": {
-        "html": "Start screen -> Question screen (with progress bar) -> Results screen (with score)",
+        "components": "QuizStart -> Question (with ProgressBar) -> Results (with score)",
         "data_format": {
             "questions": [
                 {
@@ -14,12 +14,18 @@ TRIVIA_TEMPLATE = {
                 }
             ]
         },
+        "react_components": [
+            "QuizStart.jsx — title, description, start button",
+            "Question.jsx — question text, option buttons, next button",
+            "ProgressBar.jsx — visual progress indicator",
+            "Results.jsx — score display, percentage, retry button",
+        ],
         "features": [
-            "Score tracking (correct/total)",
-            "Progress bar",
+            "Score tracking (correct/total) via useQuiz hook",
+            "Progress bar component",
             "Answer feedback (correct/incorrect with explanation)",
             "Final score with percentage and rating",
-            "Option to retry",
+            "Option to retry (reset state)",
         ],
         "scoring": "1 point per correct answer, show percentage at end",
     },
@@ -29,7 +35,7 @@ PERSONALITY_TEMPLATE = {
     "type": "personality",
     "description": "No right/wrong answers; maps responses to personality profiles",
     "structure": {
-        "html": "Start screen -> Question screen -> Profile result screen",
+        "components": "QuizStart -> Question -> ProfileResult",
         "data_format": {
             "questions": [
                 {
@@ -54,9 +60,14 @@ PERSONALITY_TEMPLATE = {
                 },
             },
         },
+        "react_components": [
+            "QuizStart.jsx — title, personality quiz intro",
+            "Question.jsx — question text, personality option cards",
+            "ProfileResult.jsx — matched profile, description, share button",
+        ],
         "features": [
             "No correct/incorrect feedback",
-            "Score accumulation per profile",
+            "Score accumulation per profile via useQuiz hook",
             "Profile result with description and matching percentage",
             "Shareable result card",
         ],
@@ -68,7 +79,7 @@ EDUCATIONAL_TEMPLATE = {
     "type": "educational",
     "description": "Learning-focused with detailed explanations",
     "structure": {
-        "html": "Start screen -> Question screen (with learn mode toggle) -> Summary screen",
+        "components": "QuizStart -> Question (with learn mode) -> Summary",
         "data_format": {
             "questions": [
                 {
@@ -81,6 +92,12 @@ EDUCATIONAL_TEMPLATE = {
                 }
             ]
         },
+        "react_components": [
+            "QuizStart.jsx — title, learning mode toggle",
+            "Question.jsx — question, options, explanation panel",
+            "Explanation.jsx — detailed explanation after answering",
+            "Summary.jsx — all questions reviewed, weak areas highlighted",
+        ],
         "features": [
             "Immediate feedback with explanation after each question",
             "Cannot proceed until viewing explanation",
@@ -96,7 +113,7 @@ EXAM_TEMPLATE = {
     "type": "exam",
     "description": "Timed assessment with pass/fail",
     "structure": {
-        "html": "Start screen (with rules) -> Timed question screen -> Detailed results",
+        "components": "QuizStart (rules) -> TimedQuestion -> DetailedResults",
         "data_format": {
             "questions": [
                 {
@@ -115,8 +132,14 @@ EXAM_TEMPLATE = {
                 "shuffle_questions": True,
             },
         },
+        "react_components": [
+            "QuizStart.jsx — rules display, start exam button",
+            "TimedQuestion.jsx — question with countdown timer",
+            "Timer.jsx — countdown display component",
+            "DetailedResults.jsx — category breakdown, pass/fail",
+        ],
         "features": [
-            "Countdown timer (prominent display)",
+            "Countdown timer (useEffect + setInterval)",
             "Auto-submit when time expires",
             "No going back to previous questions (optional)",
             "Question flagging for review",

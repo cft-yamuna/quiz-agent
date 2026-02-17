@@ -1,5 +1,5 @@
 QUIZ_UX_GUIDELINES = """
-## Quiz App UX Best Practices
+## Quiz App UX Best Practices (React)
 
 ### Visual Design
 - Use a gradient or solid color background (avoid plain white)
@@ -11,7 +11,7 @@ QUIZ_UX_GUIDELINES = """
 ### Interaction Design
 - Highlight selected option clearly (color change + scale transform)
 - Disable "Next" button until an option is selected
-- Show progress: either a progress bar or "Question X of Y"
+- Show progress: either a ProgressBar component or "Question X of Y"
 - Provide immediate visual feedback on selection
 - Make the primary action button large and obvious
 
@@ -23,14 +23,22 @@ QUIZ_UX_GUIDELINES = """
 
 ### Accessibility
 - All interactive elements must be keyboard-navigable
-- Use semantic HTML (button, not div with onclick)
+- Use semantic HTML elements (button, not div with onClick)
 - Include aria-labels for icon-only buttons
 - Ensure color is not the only indicator (add icons or text)
 - Support prefers-reduced-motion for animations
 
+### React Architecture
+- Use functional components with hooks (no class components)
+- Create a custom useQuiz() hook for all quiz state (currentQuestion, score, answers, phase)
+- Keep components small: QuizStart, Question, ProgressBar, Results
+- Put quiz data in src/data/questions.js (separate from components)
+- Use react-router-dom for navigation between quiz phases
+- Use CSS modules or a single App.css (no CSS-in-JS to keep deps minimal)
+
 ### Performance
-- Inline critical CSS or use a single external stylesheet
-- No external dependencies (no CDN calls)
-- All quiz data embedded in JS (no fetch calls needed)
-- Keep total page weight under 100KB
+- Use React.memo() for option buttons that don't change
+- Use useCallback for event handlers passed to child components
+- Lazy load the Results component (React.lazy + Suspense)
+- All quiz data embedded in JS modules (no fetch calls needed)
 """

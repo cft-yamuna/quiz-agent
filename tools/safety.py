@@ -7,10 +7,21 @@ BLOCKED_PATTERNS = [
     "sudo", "su ",
     "chmod", "chown",
     "curl", "wget",
-    "pip install", "npm install",
+    "pip install",
     "> /dev", "| rm",
-    "&&", "||", ";",
     "`", "$(",
+]
+
+# Commands that are explicitly allowed even if they contain blocked substrings
+ALLOWED_COMMANDS = [
+    "npm install",
+    "npm run dev",
+    "npm run build",
+    "npm run preview",
+    "npm start",
+    "npm init",
+    "npx create-vite",
+    "npm create vite",
 ]
 
 
@@ -37,14 +48,35 @@ def validate_path(path: str, base_dir: str) -> str:
 def validate_command(command: str) -> str:
     """
     Check command against blocklist. Raise if dangerous.
+    Allows npm/npx commands for React project setup.
     """
     cmd_lower = command.lower().strip()
+
+    # Check if command matches an allowed pattern first
+    for allowed in ALLOWED_COMMANDS:
+        if cmd_lower.startswith(allowed):
+            return command
+
+    # Block command chaining (but allow it in npm scripts context)
+    if any(chain in cmd_lower for chain in ["&&", "||", ";"]):
+        # Allow chained npm commands like "cd output/proj && npm install"
+        parts = cmd_lower.replace("&&", "|").replace("||", "|").replace(";", "|").split("|")
+        for part in parts:
+            part = part.strip()
+            if part and not any(part.startswith(a) for a in ALLOWED_COMMANDS + ["cd ", "ls", "dir"]):
+                for pattern in BLOCKED_PATTERNS:
+                    if pattern in part:
+                        raise ValueError(
+                            f"Command blocked for safety: contains '{pattern}'. "
+                            f"Only safe commands are allowed."
+                        )
+        return command
 
     for pattern in BLOCKED_PATTERNS:
         if pattern in cmd_lower:
             raise ValueError(
                 f"Command blocked for safety: contains '{pattern}'. "
-                f"Only safe read-only commands are allowed."
+                f"Only safe commands are allowed."
             )
 
     return command

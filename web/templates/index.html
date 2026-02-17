@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Agent Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">&#9889;</span>
+                    <h1>Quiz Agent</h1>
+                </div>
+                <p class="subtitle">AI-Powered Quiz Builder</p>
+                <button class="new-project-btn" onclick="handleNewProject()" title="Start a new project chat">
+                    + New Project
+                </button>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Existing Projects</h3>
+                <div id="projects-list" class="projects-list">
+                    <p class="muted">Loading...</p>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Quick Prompts</h3>
+                <div class="quick-prompts">
+                    <button class="quick-prompt" data-prompt="Build a trivia quiz about space with 10 questions">
+                        Space Trivia
+                    </button>
+                    <button class="quick-prompt" data-prompt="Create a personality quiz: What type of developer are you?">
+                        Personality Quiz
+                    </button>
+                    <button class="quick-prompt" data-prompt="Build an educational quiz about JavaScript fundamentals with explanations">
+                        JS Learning Quiz
+                    </button>
+                    <button class="quick-prompt" data-prompt="Create a timed exam quiz about Python with 15 questions and a 10 minute timer">
+                        Python Exam
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="status-indicators">
+                    <span class="status-dot" id="figma-status"></span>
+                    <span id="figma-label">Figma</span>
+                </div>
+                <div class="status-indicators">
+                    <span class="status-dot" id="memory-status"></span>
+                    <span>Memory</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Chat Area -->
+            <div class="chat-area" id="chat-area">
+                <div class="welcome-message" id="welcome">
+                    <div class="welcome-icon">&#127891;</div>
+                    <h2>Welcome to Quiz Agent Platform</h2>
+                    <p>Describe the quiz you want to build and I'll create a complete React application for you.</p>
+                    <div class="features-grid">
+                        <div class="feature-card">
+                            <span class="feature-icon">&#9881;</span>
+                            <h4>React Apps</h4>
+                            <p>Generates Vite + React projects with components, hooks, and routing</p>
+                        </div>
+                        <div class="feature-card">
+                            <span class="feature-icon">&#127912;</span>
+                            <h4>Figma Integration</h4>
+                            <p>Matches your Figma designs pixel-perfect</p>
+                        </div>
+                        <div class="feature-card">
+                            <span class="feature-icon">&#129504;</span>
+                            <h4>Smart Memory</h4>
+                            <p>Remembers past projects and learns your preferences</p>
+                        </div>
+                        <div class="feature-card">
+                            <span class="feature-icon">&#128196;</span>
+                            <h4>4 Quiz Types</h4>
+                            <p>Trivia, Personality, Educational, and Exam formats</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea
+                        id="prompt-input"
+                        placeholder="Describe the quiz you want to build... (e.g., 'Build a trivia quiz about world history with 10 questions')"
+                        rows="1"
+                    ></textarea>
+                    <button id="send-btn" class="send-btn" title="Send">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <p class="input-hint">Press Enter to send, Shift+Enter for new line</p>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

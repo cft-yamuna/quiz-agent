@@ -27,6 +27,39 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "create_files",
+        "description": (
+            "Create MULTIPLE files in one call. Much faster than calling create_file repeatedly. "
+            "Use this to scaffold an entire React project at once (package.json, vite.config.js, "
+            "index.html, src/main.jsx, src/App.jsx, components, etc.). "
+            "PREFER this over create_file when creating 2+ files."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "File path relative to project root",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Full file content",
+                            },
+                        },
+                        "required": ["path", "content"],
+                    },
+                    "description": "Array of files to create",
+                }
+            },
+            "required": ["files"],
+        },
+    },
+    {
         "name": "read_file",
         "description": (
             "Read the contents of a file. "
@@ -60,8 +93,10 @@ TOOL_DEFINITIONS = [
     {
         "name": "run_command",
         "description": (
-            "Run a shell command. Limited to safe commands only "
-            "(ls, cat, python -m http.server, etc.). Dangerous commands are blocked."
+            "Run a shell command. Limited to safe commands only. "
+            "npm install, npm run build are allowed. "
+            "Dev servers (npm run dev, npm start) run in background automatically. "
+            "Do NOT call 'npm run dev' until all files are created and npm install is done."
         ),
         "parameters": {
             "type": "object",
@@ -181,6 +216,60 @@ TOOL_DEFINITIONS = [
                 }
             },
             "required": ["path"],
+        },
+    },
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user a question and wait for their response. "
+            "Use this when you need the user's input to decide what to do next — "
+            "for example, whether to modify an existing project or create a new one. "
+            "The tool returns the user's answer as a string."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the user",
+                }
+            },
+            "required": ["question"],
+        },
+    },
+    {
+        "name": "check_existing_projects",
+        "description": (
+            "Check the output/ directory for existing quiz projects. "
+            "Returns a list of project names with their tech stack and file structure. "
+            "ALWAYS call this FIRST before building anything. "
+            "After getting results, use ask_user to ask whether to modify or create new."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_figma_design",
+        "description": (
+            "Fetch the design specifications from the connected Figma file. "
+            "Returns colors, fonts, layout structure, component hierarchy, and frame screenshots. "
+            "The Figma URL in .env may point to a specific page (via node-id) — "
+            "in that case only that page's frames are returned. "
+            "Use this FIRST when the user mentions Figma or wants to match a design. "
+            "Call with no arguments to get the full design from the linked URL."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "page_name": {
+                    "type": "string",
+                    "description": "Optional: filter by page name (e.g., 'Home Page'). Usually not needed since the URL already targets a specific page.",
+                }
+            },
+            "required": [],
         },
     },
 ]
