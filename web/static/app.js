@@ -4,6 +4,7 @@
 
 const chatArea = document.getElementById("chat-area");
 const welcomeEl = document.getElementById("welcome");
+const projectNameInput = document.getElementById("project-name-input");
 const promptInput = document.getElementById("prompt-input");
 const sendBtn = document.getElementById("send-btn");
 const projectsList = document.getElementById("projects-list");
@@ -36,6 +37,10 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".quick-prompt").forEach((btn) => {
         btn.addEventListener("click", () => {
             promptInput.value = btn.dataset.prompt;
+            // Auto-generate project name from button label
+            if (!projectNameInput.value.trim()) {
+                projectNameInput.value = btn.textContent.trim().toLowerCase().replace(/\s+/g, "_");
+            }
             promptInput.dispatchEvent(new Event("input"));
             handleSend();
         });
@@ -109,7 +114,15 @@ function handleProjectClick(projectName) {
 // ---- Send message ----
 async function handleSend() {
     const prompt = promptInput.value.trim();
+    const projectName = projectNameInput.value.trim();
     if (!prompt || isBuilding) return;
+
+    if (!projectName) {
+        projectNameInput.focus();
+        projectNameInput.style.borderColor = "var(--error, #e74c3c)";
+        setTimeout(() => { projectNameInput.style.borderColor = ""; }, 2000);
+        return;
+    }
 
     // Hide welcome
     if (welcomeEl) {
@@ -117,16 +130,18 @@ async function handleSend() {
     }
 
     // Add user message
-    addMessage("user", prompt);
+    addMessage("user", `[${projectName}] ${prompt}`);
 
     // Clear input
     promptInput.value = "";
     promptInput.style.height = "auto";
+    projectNameInput.value = "";
 
     // Disable input while building
     isBuilding = true;
     sendBtn.disabled = true;
     promptInput.disabled = true;
+    projectNameInput.disabled = true;
 
     // Add agent response placeholder with building indicator
     const agentMsg = addMessage("agent", null, true);
@@ -136,7 +151,7 @@ async function handleSend() {
         const resp = await fetch("/api/build", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({ prompt, project_name: projectName }),
         });
 
         const { session_id, error } = await resp.json();
@@ -153,6 +168,7 @@ async function handleSend() {
             isBuilding = false;
             sendBtn.disabled = false;
             promptInput.disabled = false;
+            projectNameInput.disabled = false;
             promptInput.focus();
         };
 
@@ -195,6 +211,7 @@ async function handleSend() {
         isBuilding = false;
         sendBtn.disabled = false;
         promptInput.disabled = false;
+        projectNameInput.disabled = false;
     }
 }
 
@@ -384,11 +401,6 @@ async function handleRunLatest(btn) {
             return;
         }
 
-        if (data.status === "static") {
-            btn.textContent = "Static (open manually)";
-            return;
-        }
-
         runningProject = latest.name;
         btn.disabled = false;
         btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"></rect></svg> Stop`;
@@ -445,9 +457,11 @@ function handleNewProject() {
     isBuilding = false;
     sendBtn.disabled = false;
     promptInput.disabled = false;
+    projectNameInput.disabled = false;
     promptInput.value = "";
+    projectNameInput.value = "";
     promptInput.style.height = "auto";
-    promptInput.focus();
+    projectNameInput.focus();
 
     loadProjects();
 }
@@ -478,12 +492,6 @@ async function handleRunProject(projectName, btn) {
         if (data.error) {
             btn.textContent = "Err";
             btn.title = data.error;
-            setTimeout(() => { btn.disabled = false; btn.textContent = "Run"; }, 3000);
-            return;
-        }
-
-        if (data.status === "static") {
-            btn.textContent = "Static";
             setTimeout(() => { btn.disabled = false; btn.textContent = "Run"; }, 3000);
             return;
         }

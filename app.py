@@ -10,30 +10,12 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from agent.core import AgentCore, AgentStopped
+from agent.intent import add_figma_hint, is_figma_configured
 from memory.manager import MemoryManager
 from figma.client import extract_and_update_figma_url
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-
-def _add_figma_hint(user_input: str) -> str:
-    """Append Figma hint if Figma is configured and not already mentioned."""
-    figma_url = os.environ.get("FIGMA_URL", "")
-    if figma_url or os.environ.get("FIGMA_FILE_KEY"):
-        if "figma" not in user_input.lower() and "design" not in user_input.lower():
-            hint = (
-                "\n\n[System: A Figma design file is connected. "
-                "Use fetch_figma_design to get the design specs and match them exactly."
-            )
-            # If URL has node-id, tell the agent it's page-specific
-            if "node-id=" in figma_url:
-                hint += (
-                    " The Figma URL points to a SPECIFIC page/section — "
-                    "focus only on the frames returned, do not look for other pages."
-                )
-            hint += "]"
-            user_input += hint
-    return user_input
 
 
 def _find_latest_project():
@@ -60,19 +42,8 @@ def _offer_run_project():
         return
 
     name, project_dir, _ = project
-    has_pkg = os.path.exists(os.path.join(project_dir, "package.json"))
 
-    if not has_pkg:
-        # Static project — offer to open in browser
-        index_html = os.path.join(project_dir, "index.html")
-        if os.path.exists(index_html):
-            try:
-                answer = input(f"\n  Run '{name}'? Open in browser (y/n): ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                return
-            if answer in ("y", "yes"):
-                webbrowser.open(f"file:///{os.path.abspath(index_html)}")
-                print(f"  Opened {index_html} in browser.\n")
+    if not os.path.exists(os.path.join(project_dir, "package.json")):
         return
 
     # React/Node project — offer to start dev server
@@ -133,6 +104,10 @@ def run_cli():
     )
     parser.add_argument("brief", nargs="?", help="Quiz app brief (e.g., 'Build a trivia quiz about space')")
     parser.add_argument(
+        "--name", "-n",
+        help="Project name (e.g., 'space_quiz'). Used as the output directory name.",
+    )
+    parser.add_argument(
         "--interactive", "-i",
         action="store_true",
         help="Run in interactive REPL mode",
@@ -140,7 +115,7 @@ def run_cli():
     parser.add_argument(
         "--figma",
         action="store_true",
-        help="Auto-fetch design from Figma and use it as the visual reference",
+        help="(Deprecated) Figma is now auto-detected from .env or prompt URLs",
     )
     parser.add_argument(
         "--web",
@@ -162,8 +137,8 @@ def run_cli():
     print("=" * 60)
     print("  AI Quiz Builder Agent")
     print("  Builds complete React quiz apps from your description")
-    if args.figma or os.environ.get("FIGMA_URL") or os.environ.get("FIGMA_FILE_KEY"):
-        print("  Figma design connected")
+    if is_figma_configured():
+        print("  Figma design connected (auto-detected)")
     print("  Press Ctrl+C during a build to stop it")
     print("=" * 60)
 
@@ -189,9 +164,24 @@ def run_cli():
                 print("Stop requested.\n")
                 continue
 
+            # Ask for project name
+            try:
+                project_name = input("Project name: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
+            if not project_name:
+                print("Project name is required.\n")
+                continue
+            # Sanitize: lowercase, replace spaces with underscores
+            project_name = project_name.lower().replace(" ", "_").replace("-", "_")
+
             # Auto-detect Figma URL in prompt and update .env
             extract_and_update_figma_url(user_input)
-            user_input = _add_figma_hint(user_input)
+            user_input = add_figma_hint(user_input)
+
+            # Prepend project name directive so the agent uses it
+            user_input = f"[Project name: {project_name}]\n{user_input}"
 
             print()
             try:
@@ -218,10 +208,24 @@ def run_cli():
             agent.reset()
     else:
         # Single-shot mode
-        extract_and_update_figma_url(args.brief)
-        brief = _add_figma_hint(args.brief)
+        project_name = args.name
+        if not project_name:
+            try:
+                project_name = input("Project name: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                return
+            if not project_name:
+                print("Project name is required.")
+                sys.exit(1)
+        project_name = project_name.lower().replace(" ", "_").replace("-", "_")
 
-        print(f"\nBrief: {args.brief}\n")
+        extract_and_update_figma_url(args.brief)
+        brief = add_figma_hint(args.brief)
+        brief = f"[Project name: {project_name}]\n{brief}"
+
+        print(f"\nBrief: {args.brief}")
+        print(f"Project: {project_name}\n")
         try:
             result = agent.run(brief)
             print(f"\n{'=' * 60}")

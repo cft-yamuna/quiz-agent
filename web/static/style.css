@@ -624,6 +624,28 @@ body {
     border-radius: var(--radius);
     padding: 8px 12px;
     transition: border-color 0.2s;
+    flex-wrap: wrap;
+}
+
+.project-name-input {
+    width: 180px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.project-name-input:focus {
+    border-color: var(--accent);
+}
+
+.project-name-input::placeholder {
+    color: var(--text-muted);
 }
 
 .input-container:focus-within {

@@ -27,11 +27,15 @@ class TaskPlanner:
         current = in_progress[0]
         desc_lower = current["description"].lower()
 
-        if any(w in desc_lower for w in ["plan", "architect", "design", "decide"]):
+        if any(w in desc_lower for w in ["plan", "architect", "decide"]):
             return "planning"
+        elif any(w in desc_lower for w in ["figma", "design spec", "fetch design", "visual reference"]):
+            return "designing"
+        elif any(w in desc_lower for w in ["screenshot", "compare", "visual check"]):
+            return "validating"
         elif any(w in desc_lower for w in ["review", "check", "validate", "test"]):
             return "reviewing"
-        elif any(w in desc_lower for w in ["fix", "debug", "repair", "correct"]):
+        elif any(w in desc_lower for w in ["fix", "debug", "repair", "correct", "css fix", "style fix"]):
             return "fixing"
         elif any(w in desc_lower for w in ["create", "generate", "write", "build"]):
             return "generating"

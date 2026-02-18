@@ -7,6 +7,7 @@ from tools.definitions import TOOL_DEFINITIONS
 from tools.executor import execute_tool, set_dependencies
 from agent.models import select_model
 from agent.prompts import build_system_prompt
+from agent.intent import has_design_intent, is_figma_configured
 from memory.manager import MemoryManager
 from planner.task_planner import TaskPlanner
 
@@ -51,7 +52,17 @@ class AgentCore:
 
         # Load relevant context from long-term memory
         memory_context = self.memory.get_relevant_context(user_input)
-        system_prompt = build_system_prompt(memory_context)
+
+        # Determine Figma mode based on configuration and user intent
+        if is_figma_configured() and has_design_intent(user_input):
+            figma_mode = "active"
+        elif is_figma_configured():
+            figma_mode = "available"
+        else:
+            figma_mode = "none"
+        print(f"  Figma mode: {figma_mode}")
+
+        system_prompt = build_system_prompt(memory_context, figma_mode=figma_mode)
 
         model_name = select_model(self.planner.current_phase())
         print(f"  Using model: {model_name}")

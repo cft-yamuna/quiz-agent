@@ -1,6 +1,5 @@
 import os
 import subprocess
-import webbrowser
 
 from tools.safety import validate_path, validate_command
 from figma.client import FigmaClient
@@ -277,30 +276,26 @@ def _handle_preview_app(inputs: dict) -> str:
         return f"ERROR: File not found: {inputs['path']}"
     abs_path = os.path.abspath(path)
 
-    # Check if this is a React project (has package.json)
     project_dir = os.path.dirname(abs_path)
     package_json = os.path.join(project_dir, "package.json")
-    if os.path.exists(package_json):
-        # For React projects, start the dev server
-        try:
-            subprocess.Popen(
-                "npm run dev",
-                shell=True,
-                cwd=project_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return (
-                f"Started React dev server in {project_dir}. "
-                f"Open http://localhost:5173 in your browser. "
-                f"(Run 'npm run dev' in {project_dir} if it didn't start)"
-            )
-        except Exception as e:
-            return f"Could not start dev server: {e}. Run 'npm run dev' manually in {project_dir}"
+    if not os.path.exists(package_json):
+        return f"ERROR: No package.json found in {project_dir}. Only React/Node projects are supported."
 
-    # Fallback: open static HTML directly
-    webbrowser.open(f"file:///{abs_path}")
-    return f"Opened {abs_path} in browser"
+    try:
+        subprocess.Popen(
+            "npm run dev",
+            shell=True,
+            cwd=project_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return (
+            f"Started React dev server in {project_dir}. "
+            f"Open http://localhost:5173 in your browser. "
+            f"(Run 'npm run dev' in {project_dir} if it didn't start)"
+        )
+    except Exception as e:
+        return f"Could not start dev server: {e}. Run 'npm run dev' manually in {project_dir}"
 
 
 def _handle_ask_user(inputs: dict) -> str:
@@ -335,15 +330,12 @@ def _handle_check_existing_projects(inputs: dict) -> str:
 
         # Detect project type
         has_package_json = os.path.exists(os.path.join(project_path, "package.json"))
-        has_index_html = os.path.exists(os.path.join(project_path, "index.html"))
         has_src = os.path.isdir(os.path.join(project_path, "src"))
 
         if has_package_json and has_src:
             tech = "React (Vite)"
         elif has_package_json:
             tech = "Node.js project"
-        elif has_index_html:
-            tech = "Static HTML/CSS/JS"
         else:
             tech = "Unknown"
 

@@ -95,14 +95,11 @@ def list_projects():
             if os.path.isdir(project_path):
                 has_pkg = os.path.exists(os.path.join(project_path, "package.json"))
                 has_src = os.path.isdir(os.path.join(project_path, "src"))
-                has_html = os.path.exists(os.path.join(project_path, "index.html"))
 
                 if has_pkg and has_src:
                     tech = "React"
                 elif has_pkg:
                     tech = "Node.js"
-                elif has_html:
-                    tech = "HTML/CSS/JS"
                 else:
                     tech = "Unknown"
 
@@ -115,28 +112,25 @@ def build():
     """Start building a quiz app from a prompt."""
     data = request.json
     prompt = data.get("prompt", "").strip()
+    project_name = data.get("project_name", "").strip()
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
+    if not project_name:
+        return jsonify({"error": "Project name is required"}), 400
+
+    # Sanitize project name
+    project_name = project_name.lower().replace(" ", "_").replace("-", "_")
 
     # Auto-detect Figma URL in prompt and update .env
     from figma.client import extract_and_update_figma_url
     extract_and_update_figma_url(prompt)
 
-    # Add Figma hint if configured
-    figma_url = os.environ.get("FIGMA_URL", "")
-    if figma_url or os.environ.get("FIGMA_FILE_KEY"):
-        if "figma" not in prompt.lower() and "design" not in prompt.lower():
-            hint = (
-                "\n\n[System: A Figma design file is connected. "
-                "Use fetch_figma_design to get the design specs and match them exactly."
-            )
-            if "node-id=" in figma_url:
-                hint += (
-                    " The Figma URL points to a SPECIFIC page/section — "
-                    "focus only on the frames returned, do not look for other pages."
-                )
-            hint += "]"
-            prompt += hint
+    # Add Figma/design hint based on config and intent
+    from agent.intent import add_figma_hint
+    prompt = add_figma_hint(prompt)
+
+    # Prepend project name directive
+    prompt = f"[Project name: {project_name}]\n{prompt}"
 
     # Create a unique session ID for log streaming
     import uuid
@@ -251,14 +245,8 @@ def run_project(project_name):
     if not os.path.isdir(project_dir):
         return jsonify({"error": f"Project '{project_name}' not found"}), 404
 
-    has_pkg = os.path.exists(os.path.join(project_dir, "package.json"))
-    if not has_pkg:
-        # Static HTML project — no dev server needed
-        return jsonify({
-            "status": "static",
-            "url": None,
-            "message": f"Static project. Open output/{project_name}/index.html directly.",
-        })
+    if not os.path.exists(os.path.join(project_dir, "package.json")):
+        return jsonify({"error": "No package.json found. Only React/Node projects are supported."}), 400
 
     # Kill ALL previous dev servers (ours + executor's + anything on port 5173)
     _kill_all_dev_servers()
