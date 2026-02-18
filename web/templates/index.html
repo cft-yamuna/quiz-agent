@@ -52,6 +52,10 @@
                     <span id="figma-label">Figma</span>
                 </div>
                 <div class="status-indicators">
+                    <span class="status-dot" id="mcp-status"></span>
+                    <span>MCP Server</span>
+                </div>
+                <div class="status-indicators">
                     <span class="status-dot" id="memory-status"></span>
                     <span>Memory</span>
                 </div>
@@ -65,7 +69,7 @@
                 <div class="welcome-message" id="welcome">
                     <div class="welcome-icon">&#127891;</div>
                     <h2>Welcome to Quiz Agent Platform</h2>
-                    <p>Describe the quiz you want to build and I'll create a complete React application for you.</p>
+                    <p>Select a project from the sidebar to modify it, or click <strong>+ New Project</strong> to start fresh.</p>
                     <div class="features-grid">
                         <div class="feature-card">
                             <span class="feature-icon">&#9881;</span>
@@ -93,30 +97,40 @@
 
             <!-- Input Area -->
             <div class="input-area">
+                <!-- Active project badge (hidden until a project is selected) -->
+                <div class="active-project-badge" id="active-project-badge" style="display: none;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    <span id="active-project-name"></span>
+                    <button class="active-project-clear" onclick="clearActiveProject()" title="Clear project">&times;</button>
+                </div>
+                <!-- Image preview strip (shown when images are attached) -->
+                <div class="image-preview-strip" id="image-preview-strip" style="display: none;"></div>
                 <div class="input-container">
-                    <input
-                        type="text"
-                        id="project-name-input"
-                        placeholder="Project name (e.g., space_quiz)"
-                        class="project-name-input"
-                    />
+                    <label for="prompt-input" class="sr-only">Prompt input</label>
+                    <input type="file" id="image-upload" accept="image/*" multiple hidden />
+                    <button id="upload-btn" class="upload-btn" aria-label="Attach screenshot" title="Attach screenshot">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
                     <textarea
                         id="prompt-input"
-                        placeholder="Describe the quiz you want to build... (e.g., 'Build a trivia quiz about world history with 10 questions')"
+                        placeholder="Select a project or type to get started..."
                         rows="1"
                     ></textarea>
-                    <button id="send-btn" class="send-btn" title="Send">
+                    <button id="send-btn" class="send-btn" aria-label="Send prompt" title="Send">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
                             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                         </svg>
                     </button>
                 </div>
-                <p class="input-hint">Press Enter to send, Shift+Enter for new line</p>
+                <p class="input-hint">Enter to send &middot; Shift+Enter for new line &middot; + to attach screenshots</p>
             </div>
         </main>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js" defer></script>
 </body>
 </html>

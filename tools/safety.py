@@ -1,4 +1,5 @@
 import os
+import re
 
 # Patterns that are blocked in shell commands
 BLOCKED_PATTERNS = [
@@ -22,7 +23,11 @@ ALLOWED_COMMANDS = [
     "npm init",
     "npx create-vite",
     "npm create vite",
+    "npx vite build",
 ]
+
+# Shell metacharacters that should not appear in command parts (beyond && for chaining)
+_DANGEROUS_SHELL_CHARS = re.compile(r'[|;`$\(\)<>]')
 
 
 def validate_path(path: str, base_dir: str) -> str:
@@ -45,6 +50,18 @@ def validate_path(path: str, base_dir: str) -> str:
     return resolved
 
 
+def _is_safe_npm_install(part: str) -> bool:
+    """Check if an npm install command is safe (no arbitrary packages from agent)."""
+    part = part.strip()
+    # Allow bare `npm install` or `npm i` (installs from package.json)
+    if part in ("npm install", "npm i"):
+        return True
+    # Block `npm install <package>` — the agent should edit package.json instead
+    if part.startswith("npm install ") or part.startswith("npm i "):
+        return False
+    return True
+
+
 def validate_command(command: str) -> str:
     """
     Check command against blocklist. Raise if dangerous.
@@ -55,21 +72,45 @@ def validate_command(command: str) -> str:
     # Check if command matches an allowed pattern first
     for allowed in ALLOWED_COMMANDS:
         if cmd_lower.startswith(allowed):
+            # Extra check: restrict npm install arguments
+            if allowed == "npm install" and not _is_safe_npm_install(cmd_lower):
+                raise ValueError(
+                    "npm install with package arguments is blocked. "
+                    "Add dependencies to package.json and run `npm install` instead."
+                )
             return command
 
     # Block command chaining (but allow it in npm scripts context)
     if any(chain in cmd_lower for chain in ["&&", "||", ";"]):
         # Allow chained npm commands like "cd output/proj && npm install"
-        parts = cmd_lower.replace("&&", "|").replace("||", "|").replace(";", "|").split("|")
+        parts = cmd_lower.replace("&&", "|SEP|").replace("||", "|SEP|").replace(";", "|SEP|").split("|SEP|")
         for part in parts:
             part = part.strip()
-            if part and not any(part.startswith(a) for a in ALLOWED_COMMANDS + ["cd ", "ls", "dir"]):
-                for pattern in BLOCKED_PATTERNS:
-                    if pattern in part:
-                        raise ValueError(
-                            f"Command blocked for safety: contains '{pattern}'. "
-                            f"Only safe commands are allowed."
-                        )
+            if not part:
+                continue
+            # Check if this part is an allowed command
+            is_allowed = any(part.startswith(a) for a in ALLOWED_COMMANDS + ["cd ", "ls", "dir"])
+            if is_allowed:
+                # Extra check for npm install args
+                if part.startswith("npm install") and not _is_safe_npm_install(part):
+                    raise ValueError(
+                        "npm install with package arguments is blocked. "
+                        "Add dependencies to package.json and run `npm install` instead."
+                    )
+                continue
+            # Not an allowed command — check for blocked patterns
+            for pattern in BLOCKED_PATTERNS:
+                if pattern in part:
+                    raise ValueError(
+                        f"Command blocked for safety: contains '{pattern}'. "
+                        f"Only safe commands are allowed."
+                    )
+            # Also check for dangerous shell metacharacters in non-allowed parts
+            if _DANGEROUS_SHELL_CHARS.search(part):
+                raise ValueError(
+                    f"Command blocked for safety: contains shell metacharacters. "
+                    f"Only safe commands are allowed."
+                )
         return command
 
     for pattern in BLOCKED_PATTERNS:

@@ -1,5 +1,8 @@
 import os
+import json
 import subprocess
+import threading
+import time
 
 from tools.safety import validate_path, validate_command
 from figma.client import FigmaClient
@@ -10,27 +13,38 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # These are set by AgentCore after initialization
 _memory = None
 _planner = None
-_ask_user_fn = None  # Callback for getting user input
+_current_project = None  # Active project name — used to enforce output/<project>/ paths
+
+# Lock for shared dependencies
+_deps_lock = threading.Lock()
 
 # Track the running dev server so we can kill it before starting a new one
 _dev_server_proc = None
 _dev_server_project = None
+_dev_server_lock = threading.Lock()
 
 
-def set_dependencies(memory, planner, ask_user_fn=None):
-    """Called by AgentCore to inject shared instances."""
-    global _memory, _planner, _ask_user_fn
-    _memory = memory
-    _planner = planner
-    if ask_user_fn is not None:
-        _ask_user_fn = ask_user_fn
+def set_dependencies(memory, planner, ask_user_fn=None, project_name=None):
+    """Called by AgentCore to inject shared instances.
+    ask_user_fn is accepted for backwards compatibility but ignored (autonomous mode).
+    project_name sets the active project so file paths are enforced under output/<project>/."""
+    global _memory, _planner, _current_project
+    with _deps_lock:
+        _memory = memory
+        _planner = planner
+        if project_name is not None:
+            _current_project = project_name
 
 
-def execute_tool(name: str, inputs: dict) -> str:
+def execute_tool(name: str, inputs) -> str:
     """
     Dispatch tool call to the appropriate handler.
     Returns a string result (success message or error).
     """
+    # Validate inputs is a dict
+    if not isinstance(inputs, dict):
+        return json.dumps({"error": True, "message": f"Invalid inputs: expected dict, got {type(inputs).__name__}", "tool": name})
+
     handlers = {
         "create_file": _handle_create_file,
         "create_files": _handle_create_files,
@@ -42,7 +56,6 @@ def execute_tool(name: str, inputs: dict) -> str:
         "plan_tasks": _handle_plan_tasks,
         "preview_app": _handle_preview_app,
         "ask_user": _handle_ask_user,
-        "check_existing_projects": _handle_check_existing_projects,
         "fetch_figma_design": _handle_fetch_figma_design,
         "validate_screenshots": _handle_validate_screenshots,
         "analyze_flow": _handle_analyze_flow,
@@ -51,18 +64,69 @@ def execute_tool(name: str, inputs: dict) -> str:
 
     handler = handlers.get(name)
     if not handler:
-        return f"ERROR: Unknown tool '{name}'"
+        return json.dumps({"error": True, "message": f"Unknown tool '{name}'", "tool": name})
+
+    # Check required keys per tool
+    required_keys = {
+        "create_file": ["path", "content"],
+        "read_file": ["path"],
+        "list_files": ["directory"],
+        "run_command": ["command"],
+        "search_memory": ["query"],
+        "save_memory": ["category", "key", "data"],
+        "plan_tasks": ["tasks"],
+        "preview_app": ["path"],
+        "validate_screenshots": ["project_name"],
+    }
+    if name in required_keys:
+        missing = [k for k in required_keys[name] if k not in inputs]
+        if missing:
+            return json.dumps({"error": True, "message": f"Missing required keys: {missing}", "tool": name})
 
     return handler(inputs)
 
 
+def _enforce_output_dir(path: str) -> str:
+    """Ensure file path is inside output/<project>/. Auto-correct bad paths."""
+    normalized = path.replace("\\", "/").lstrip("./")
+
+    # Already correct: output/<something>/...
+    if normalized.startswith("output/"):
+        parts = normalized.split("/")
+        # Must have at least output/<project>/<file> — not just output/<file>
+        if len(parts) >= 3:
+            return normalized
+        # Edge case: output/package.json — missing project name
+        if _current_project and len(parts) == 2:
+            print(f"  [Path Fix] Added project name: {path} -> output/{_current_project}/{parts[1]}")
+            return f"output/{_current_project}/{parts[1]}"
+        return normalized
+
+    # Path does NOT start with output/ — agent mistake.
+    # Check if it starts with the project name already (e.g. "my_quiz/src/App.jsx")
+    if _current_project and normalized.startswith(f"{_current_project}/"):
+        print(f"  [Path Fix] Added output/ prefix: {path} -> output/{normalized}")
+        return f"output/{normalized}"
+
+    # Bare path like "src/App.jsx" or "package.json" — prepend output/<project>/
+    if _current_project:
+        fixed = f"output/{_current_project}/{normalized}"
+        print(f"  [Path Fix] Redirected to project: {path} -> {fixed}")
+        return fixed
+
+    # No project context — last resort, just put under output/
+    print(f"  [Path Fix] No project context, using output/: {path}")
+    return f"output/{normalized}"
+
+
 def _handle_create_file(inputs: dict) -> str:
-    path = validate_path(inputs["path"], BASE_DIR)
+    raw_path = _enforce_output_dir(inputs["path"])
+    path = validate_path(raw_path, BASE_DIR)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(inputs["content"])
     size = len(inputs["content"])
-    return f"Created {inputs['path']} ({size} bytes)"
+    return f"Created {raw_path} ({size} bytes)"
 
 
 def _handle_create_files(inputs: dict) -> str:
@@ -72,29 +136,45 @@ def _handle_create_files(inputs: dict) -> str:
         return "ERROR: No files provided"
 
     results = []
+    errors = []
     for f in files:
-        path = validate_path(f["path"], BASE_DIR)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(f["content"])
-        results.append(f"  {f['path']} ({len(f['content'])} bytes)")
+        try:
+            raw_path = _enforce_output_dir(f["path"])
+            path = validate_path(raw_path, BASE_DIR)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(f["content"])
+            results.append(f"  {raw_path} ({len(f['content'])} bytes)")
+        except Exception as e:
+            errors.append(f"  FAILED {f.get('path', '???')}: {e}")
 
-    return f"Created {len(results)} files:\n" + "\n".join(results)
+    summary = f"Created {len(results)} files"
+    if errors:
+        summary += f", {len(errors)} failed"
+    parts = [summary + ":"]
+    parts.extend(results)
+    if errors:
+        parts.append("Errors:")
+        parts.extend(errors)
+    return "\n".join(parts)
 
 
 def _handle_read_file(inputs: dict) -> str:
-    path = validate_path(inputs["path"], BASE_DIR)
+    raw_path = _enforce_output_dir(inputs["path"])
+    path = validate_path(raw_path, BASE_DIR)
     if not os.path.exists(path):
         return f"ERROR: File not found: {inputs['path']}"
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
-    if len(content) > 10000:
-        content = content[:10000] + f"\n... (truncated, {len(content)} total chars)"
+    total = len(content)
+    if total > 10000:
+        content = content[:10000] + f"\n\n--- FILE TRUNCATED (showing first 10000 of {total} chars) ---"
     return content
 
 
 def _handle_list_files(inputs: dict) -> str:
-    directory = validate_path(inputs["directory"], BASE_DIR)
+    raw_dir = _enforce_output_dir(inputs["directory"])
+    directory = validate_path(raw_dir, BASE_DIR)
     if not os.path.isdir(directory):
         return f"ERROR: Not a directory: {inputs['directory']}"
     entries = []
@@ -153,21 +233,22 @@ def _kill_port(port=5173):
 def kill_dev_server():
     """Kill the currently running dev server (public, used by web/server.py too)."""
     global _dev_server_proc, _dev_server_project
-    if _dev_server_proc and _dev_server_proc.poll() is None:
-        try:
-            _dev_server_proc.terminate()
-            _dev_server_proc.wait(timeout=5)
-        except Exception:
+    with _dev_server_lock:
+        if _dev_server_proc and _dev_server_proc.poll() is None:
             try:
-                _dev_server_proc.kill()
+                _dev_server_proc.terminate()
+                _dev_server_proc.wait(timeout=5)
             except Exception:
-                pass
-        old_project = _dev_server_project
-        _dev_server_proc = None
-        _dev_server_project = None
-        print(f"  [Dev Server] Killed tracked server ({old_project})")
-    # Also kill anything else on port 5173 (e.g. server started by another module)
-    _kill_port(5173)
+                try:
+                    _dev_server_proc.kill()
+                except Exception:
+                    pass
+            old_project = _dev_server_project
+            _dev_server_proc = None
+            _dev_server_project = None
+            print(f"  [Dev Server] Killed tracked server ({old_project})")
+        # Also kill anything else on port 5173 (e.g. server started by another module)
+        _kill_port(5173)
 
 
 def _kill_dev_server():
@@ -200,14 +281,25 @@ def _handle_run_command(inputs: dict) -> str:
         project_name = os.path.basename(project_cwd) if project_cwd != BASE_DIR else "unknown"
 
         try:
-            _dev_server_proc = subprocess.Popen(
-                clean_command,
-                shell=True,
-                cwd=project_cwd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            _dev_server_project = project_name
+            with _dev_server_lock:
+                _dev_server_proc = subprocess.Popen(
+                    clean_command,
+                    shell=True,
+                    cwd=project_cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                _dev_server_project = project_name
+
+            # Verify the process is still alive after a brief wait
+            time.sleep(2)
+            with _dev_server_lock:
+                if _dev_server_proc and _dev_server_proc.poll() is not None:
+                    exit_code = _dev_server_proc.returncode
+                    _dev_server_proc = None
+                    _dev_server_project = None
+                    return f"ERROR: Dev server exited immediately with code {exit_code}. Check that npm install was run and package.json is valid."
+
             print(f"  [Dev Server] Started for '{project_name}' (cwd: {project_cwd})")
             return (
                 f"Started dev server for '{project_name}' in background (cwd: {project_cwd}). "
@@ -247,7 +339,6 @@ def _handle_search_memory(inputs: dict) -> str:
     results = _memory.search(inputs["query"], category)
     if not results:
         return "No matching memories found."
-    import json
 
     lines = []
     for r in results:
@@ -262,6 +353,34 @@ def _handle_save_memory(inputs: dict) -> str:
     if _memory is None:
         return "ERROR: Memory not initialized"
     _memory.save(inputs["category"], inputs["key"], inputs["data"])
+
+    # If saving to "projects" category, also write .project_memory.json
+    # in the project directory so it's available on next modify
+    if inputs["category"] == "projects":
+        project_dir = os.path.join(BASE_DIR, "output", inputs["key"])
+        if os.path.isdir(project_dir):
+            mem_path = os.path.join(project_dir, ".project_memory.json")
+            try:
+                # Load existing memory to merge (preserve change history)
+                existing = {}
+                if os.path.exists(mem_path):
+                    with open(mem_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+
+                new_data = inputs["data"]
+                # Merge changes list (append new changes to history)
+                if "changes" in existing and "changes" in new_data:
+                    all_changes = existing["changes"] + new_data["changes"]
+                    new_data["changes"] = all_changes[-10:]  # Keep last 10
+                elif "changes" in existing and "changes" not in new_data:
+                    new_data["changes"] = existing["changes"]
+
+                existing.update(new_data)
+                with open(mem_path, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, indent=2)
+            except Exception as e:
+                print(f"  Warning: Could not save project memory: {e}")
+
     return f"Saved to {inputs['category']}/{inputs['key']}"
 
 
@@ -301,79 +420,15 @@ def _handle_preview_app(inputs: dict) -> str:
 
 
 def _handle_ask_user(inputs: dict) -> str:
-    """Ask the user a question and return their response."""
+    """Autonomous mode: agent should not ask the user. Returns a directive to proceed."""
     question = inputs.get("question", "")
-    if not question:
-        return "ERROR: No question provided"
-
-    if _ask_user_fn is None:
-        # Fallback: direct stdin (works in CLI)
-        print(f"\n  Agent asks: {question}")
-        try:
-            answer = input("  You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return "User did not respond."
-        return answer if answer else "User did not respond."
-
-    # Use injected callback (for web UI, etc.)
-    return _ask_user_fn(question)
-
-
-def _handle_check_existing_projects(inputs: dict) -> str:
-    output_dir = os.path.join(BASE_DIR, "output")
-    if not os.path.exists(output_dir):
-        return "No existing projects found. The output/ directory does not exist yet."
-
-    projects = []
-    for item in sorted(os.listdir(output_dir)):
-        project_path = os.path.join(output_dir, item)
-        if not os.path.isdir(project_path):
-            continue
-
-        # Detect project type
-        has_package_json = os.path.exists(os.path.join(project_path, "package.json"))
-        has_src = os.path.isdir(os.path.join(project_path, "src"))
-
-        if has_package_json and has_src:
-            tech = "React (Vite)"
-        elif has_package_json:
-            tech = "Node.js project"
-        else:
-            tech = "Unknown"
-
-        # List key files
-        files = []
-        for root, dirs, filenames in os.walk(project_path):
-            # Skip node_modules
-            dirs[:] = [d for d in dirs if d != "node_modules"]
-            for fname in filenames:
-                rel = os.path.relpath(os.path.join(root, fname), project_path)
-                files.append(rel)
-
-        projects.append({
-            "name": item,
-            "tech": tech,
-            "files": files[:20],  # Limit to 20 files
-            "file_count": len(files),
-        })
-
-    if not projects:
-        return "No existing projects found in the output/ directory."
-
-    import json
-    lines = [f"Found {len(projects)} existing project(s):\n"]
-    for p in projects:
-        lines.append(f"### {p['name']} ({p['tech']})")
-        lines.append(f"  Files ({p['file_count']} total): {', '.join(p['files'][:10])}")
-        if p['file_count'] > 10:
-            lines.append(f"  ... and {p['file_count'] - 10} more files")
-        lines.append("")
-
-    lines.append(
-        "NEXT STEP: Use the ask_user tool to ask the user whether they want to "
-        "MODIFY one of these existing projects or CREATE a completely new one."
+    print(f"  [Autonomous] Agent attempted to ask: {question}")
+    return (
+        "AUTONOMOUS MODE: Do not wait for user input. "
+        "Make your best professional judgment and proceed. "
+        "You are the expert — decide and continue building."
     )
-    return "\n".join(lines)
+
 
 
 def _handle_validate_screenshots(inputs: dict) -> str:
@@ -468,7 +523,6 @@ def _handle_fetch_figma_design(inputs: dict) -> str:
         specs += "\n__FIGMA_IMAGES__:" + ",".join(image_paths.values())
 
         # Save frame manifest so the validator knows which frames are current
-        import json
         manifest_path = os.path.join(BASE_DIR, "figma", "cache", "_current_frames.json")
         try:
             with open(manifest_path, "w") as f:
@@ -485,7 +539,6 @@ def _handle_fetch_figma_design(inputs: dict) -> str:
 
 def _handle_analyze_flow(inputs: dict) -> str:
     """Analyze Figma frames to determine app screen flow and navigation."""
-    import json
     from figma.flow_analyzer import analyze_flow, save_confirmed_flow
 
     # Load cached Figma data
@@ -509,47 +562,14 @@ def _handle_analyze_flow(inputs: dict) -> str:
     # Analyze the flow
     flow = analyze_flow(frames, interactive_elements)
 
-    # Present to user for editing
-    flow_text = flow["flow_text"]
-    prompt = (
-        f"{flow_text}\n\n"
-        "---\n"
-        "Review the flow above. You can:\n"
-        "  - Press Enter to CONFIRM this flow as-is\n"
-        "  - Type corrections to edit the flow (e.g., 'Add a Settings screen after Results')\n"
-        "  - Describe a different flow entirely\n\n"
-        "Your input:"
-    )
-
-    # Ask user via the configured ask_user mechanism
-    if _ask_user_fn:
-        user_response = _ask_user_fn(prompt)
-    else:
-        print(f"\n{prompt}")
-        try:
-            user_response = input("  You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            user_response = ""
-
-    # If user provided edits, include them in the flow
-    if user_response and user_response.lower() not in ("", "ok", "yes", "confirm", "looks good", "lgtm"):
-        flow["user_edits"] = user_response
-        flow["flow_text"] += f"\n\nUSER EDITS:\n{user_response}"
-
-    # Save confirmed flow for use during BUILD phase
+    # Auto-confirm flow — no user interaction needed
     save_confirmed_flow(flow)
 
     result = (
-        "Flow analysis confirmed.\n\n"
+        "Flow analysis auto-confirmed.\n\n"
         f"{flow['flow_text']}\n\n"
         f"Screens: {len(flow['screens'])}\n"
         f"Transitions: {len(flow['transitions'])}\n"
-    )
-
-    if flow.get("user_edits"):
-        result += f"\nUser requested changes: {flow['user_edits']}\n"
-
-    result += (
         "\nUse this confirmed flow to:\n"
         "  1. Create React Router routes matching each screen\n"
         "  2. Build components for each screen\n"
@@ -624,7 +644,6 @@ def _handle_fetch_figma_mcp(inputs: dict) -> str:
 
         if image_paths:
             mcp_result += "\n\n## Frame Screenshots (sent as images for visual reference)\n"
-            import json
             frame_manifest = []
             for frame in frames[:10]:
                 if frame["id"] in image_paths:

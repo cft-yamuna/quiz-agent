@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from agent.core import AgentCore, AgentStopped
+from agent.context import build_prompt_context
 from agent.intent import add_figma_hint, is_figma_configured
 from memory.manager import MemoryManager
 from figma.client import extract_and_update_figma_url
@@ -180,8 +181,8 @@ def run_cli():
             extract_and_update_figma_url(user_input)
             user_input = add_figma_hint(user_input)
 
-            # Prepend project name directive so the agent uses it
-            user_input = f"[Project name: {project_name}]\n{user_input}"
+            # Build full context (detects create vs modify, injects file contents)
+            user_input = build_prompt_context(project_name, user_input, BASE_DIR)
 
             print()
             try:
@@ -222,7 +223,7 @@ def run_cli():
 
         extract_and_update_figma_url(args.brief)
         brief = add_figma_hint(args.brief)
-        brief = f"[Project name: {project_name}]\n{brief}"
+        brief = build_prompt_context(project_name, brief, BASE_DIR)
 
         print(f"\nBrief: {args.brief}")
         print(f"Project: {project_name}\n")

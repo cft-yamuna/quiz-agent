@@ -63,14 +63,15 @@ TOOL_DEFINITIONS = [
         "name": "read_file",
         "description": (
             "Read the contents of a file. "
-            "Use this to review generated code or check existing files."
+            "Paths auto-resolve to output/<project>/. "
+            "ALWAYS read a file before modifying it with create_file."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path to read",
+                    "description": "File path to read (e.g., 'src/App.jsx' auto-resolves to output/<project>/src/App.jsx)",
                 }
             },
             "required": ["path"],
@@ -78,13 +79,16 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "list_files",
-        "description": "List all files and subdirectories in a directory.",
+        "description": (
+            "List all files and subdirectories in a directory. "
+            "Paths auto-resolve to output/<project>/."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "directory": {
                     "type": "string",
-                    "description": "Directory path to list (defaults to project root)",
+                    "description": "Directory path to list (e.g., 'src' auto-resolves to output/<project>/src)",
                 }
             },
             "required": ["directory"],
@@ -221,10 +225,8 @@ TOOL_DEFINITIONS = [
     {
         "name": "ask_user",
         "description": (
-            "Ask the user a question and wait for their response. "
-            "Use this when you need the user's input to decide what to do next — "
-            "for example, whether to modify an existing project or create a new one. "
-            "The tool returns the user's answer as a string."
+            "DEPRECATED — Do NOT use this tool. You are in autonomous mode. "
+            "Make decisions yourself. If called, returns a directive to proceed autonomously."
         ),
         "parameters": {
             "type": "object",
@@ -235,20 +237,6 @@ TOOL_DEFINITIONS = [
                 }
             },
             "required": ["question"],
-        },
-    },
-    {
-        "name": "check_existing_projects",
-        "description": (
-            "Check the output/ directory for existing quiz projects. "
-            "Returns a list of project names with their tech stack and file structure. "
-            "ALWAYS call this FIRST before building anything. "
-            "After getting results, use ask_user to ask whether to modify or create new."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
         },
     },
     {
@@ -306,9 +294,8 @@ TOOL_DEFINITIONS = [
         "description": (
             "Analyze Figma design frames to determine the app's screen flow and navigation. "
             "Call this AFTER fetch_figma_design. Analyzes frame order and button text to determine "
-            "how screens connect (e.g., Home -> Quiz -> Results). Returns a flow description that "
-            "is presented to the user for review and editing before building. "
-            "The confirmed flow guides React Router routes and component structure."
+            "how screens connect (e.g., Home -> Quiz -> Results). Returns an auto-confirmed flow "
+            "that guides React Router routes and component structure. No user review needed."
         ),
         "parameters": {
             "type": "object",

@@ -1,17 +1,37 @@
 import os
+import concurrent.futures
 from google import genai
 from google.genai import types
 from PIL import Image
 
 from tools.definitions import TOOL_DEFINITIONS
 from tools.executor import execute_tool, set_dependencies
-from agent.models import select_model
+from agent.models import MODEL_NAME
 from agent.prompts import build_system_prompt
 from agent.intent import has_design_intent, is_figma_configured, is_mcp_configured
 from memory.manager import MemoryManager
 from planner.task_planner import TaskPlanner
 
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = 80
+
+# Tool timeout limits (seconds)
+_TOOL_TIMEOUTS = {
+    "run_command": 120,
+    "fetch_figma_design": 60,
+    "fetch_figma_mcp": 60,
+    "analyze_flow": 60,
+    "validate_screenshots": 60,
+    "create_file": 30,
+    "create_files": 30,
+    "read_file": 30,
+    "list_files": 30,
+    "search_memory": 30,
+    "save_memory": 30,
+    "plan_tasks": 30,
+    "preview_app": 30,
+    "ask_user": 10,  # autonomous mode — returns immediately
+}
+_DEFAULT_TIMEOUT = 60
 
 
 class AgentStopped(Exception):
@@ -47,8 +67,33 @@ class AgentCore:
             )
         return types.Tool(function_declarations=declarations)
 
-    def run(self, user_input: str) -> str:
-        """Main entry point. Runs the agentic loop until completion."""
+    def _execute_with_timeout(self, name: str, args: dict) -> str:
+        """Execute a tool with a timeout. Returns result or error string."""
+        timeout = _TOOL_TIMEOUTS.get(name, _DEFAULT_TIMEOUT)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(execute_tool, name, args)
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                return f'{{"error": true, "message": "Tool \'{name}\' timed out after {timeout}s", "tool": "{name}"}}'
+
+    def run(self, user_input: str, image_paths: list = None) -> str:
+        """Main entry point. Runs the agentic loop until completion.
+
+        Args:
+            user_input: The user's prompt/message.
+            image_paths: Optional list of file paths to user-uploaded screenshots.
+                         These are sent as images alongside the first message so
+                         Gemini can see what the user is referring to.
+        """
+
+        # Extract project name from prompt directive [Project name: xxx]
+        import re
+        proj_match = re.search(r'\[Project name:\s*(\S+)\]', user_input)
+        project_name = proj_match.group(1) if proj_match else None
+        if project_name:
+            set_dependencies(memory=self.memory, planner=self.planner, project_name=project_name)
+            print(f"  Active project: {project_name}")
 
         # Load relevant context from long-term memory
         memory_context = self.memory.get_relevant_context(user_input)
@@ -65,8 +110,7 @@ class AgentCore:
 
         system_prompt = build_system_prompt(memory_context, figma_mode=figma_mode, use_mcp=use_mcp)
 
-        model_name = select_model(self.planner.current_phase())
-        print(f"  Using model: {model_name}")
+        print(f"  Using model: {MODEL_NAME}")
 
         # Create chat config with tools and system instruction
         config = types.GenerateContentConfig(
@@ -75,11 +119,29 @@ class AgentCore:
         )
 
         # Start a chat session
-        chat = self.client.chats.create(model=model_name, config=config)
+        chat = self.client.chats.create(model=MODEL_NAME, config=config)
         self.iteration_count = 0
 
-        # Send initial user message
-        current_input = user_input
+        # Build initial user message — include uploaded screenshots if any
+        if image_paths:
+            current_input = [types.Part.from_text(text=user_input)]
+            current_input.append(types.Part.from_text(
+                text=f"The user has attached {len(image_paths)} screenshot(s). "
+                     "Study them carefully — they show what the user wants the app to look like. "
+                     "Use these as your design reference."
+            ))
+            for img_path in image_paths:
+                try:
+                    img = Image.open(img_path)
+                    current_input.append(img)
+                    current_input.append(types.Part.from_text(
+                        text=f"[User screenshot: {os.path.basename(img_path)}]"
+                    ))
+                    print(f"  -> Attached user screenshot: {os.path.basename(img_path)}")
+                except Exception as e:
+                    print(f"  -> Warning: Could not load user image {img_path}: {e}")
+        else:
+            current_input = user_input
         self._stop_requested = False
 
         while self.iteration_count < MAX_ITERATIONS:
@@ -89,21 +151,40 @@ class AgentCore:
                 raise AgentStopped("Build stopped by user.")
 
             self.iteration_count += 1
-            phase = self.planner.current_phase()
-            print(f"  [{phase}] Iteration {self.iteration_count}")
+            remaining = MAX_ITERATIONS - self.iteration_count
+            print(f"  Iteration {self.iteration_count}")
+            if remaining <= 10:
+                print(f"  WARNING: Only {remaining} iterations remaining!")
 
-            response = chat.send_message(current_input)
+            try:
+                response = chat.send_message(current_input)
+            except Exception as e:
+                print(f"  API error: {e}")
+                # Retry once on API failure
+                try:
+                    response = chat.send_message(current_input)
+                except Exception as e2:
+                    return f"Agent stopped due to API error: {e2}"
+
+            # Handle missing response candidates
+            if not response.candidates or not response.candidates[0].content:
+                print("  Warning: Empty response from model, retrying...")
+                try:
+                    response = chat.send_message("Continue with the task. Your last response was empty.")
+                except Exception as e:
+                    return f"Agent stopped: model returned empty response and retry failed: {e}"
+                if not response.candidates or not response.candidates[0].content:
+                    return "Agent stopped: model returned empty response after retry."
 
             # Check for function calls in the response
             function_calls = []
             text_parts = []
 
-            if response.candidates and response.candidates[0].content:
-                for part in response.candidates[0].content.parts:
-                    if part.function_call:
-                        function_calls.append(part.function_call)
-                    if part.text:
-                        text_parts.append(part.text)
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    function_calls.append(part.function_call)
+                if part.text:
+                    text_parts.append(part.text)
 
             # Print any text from the model
             for text in text_parts:
@@ -120,15 +201,25 @@ class AgentCore:
             figma_images = []
 
             for fc in function_calls:
+                # Check stop between each tool call
+                if self._stop_requested:
+                    print("  Build stopped by user.")
+                    raise AgentStopped("Build stopped by user.")
+
                 name = fc.name
                 args = dict(fc.args) if fc.args else {}
                 print(f"  -> Tool: {name}({_summarize_inputs(args)})")
 
                 try:
-                    result = execute_tool(name, args)
+                    result = self._execute_with_timeout(name, args)
                 except Exception as e:
                     print(f"  -> ERROR: {e}")
-                    result = f"ERROR: {str(e)}"
+                    result = f'{{"error": true, "message": "{str(e)}", "tool": "{name}"}}'
+
+                # Handle empty/None tool results
+                if result is None or result == "":
+                    print(f"  -> Warning: Tool '{name}' returned empty result")
+                    result = f"Tool '{name}' completed but returned no output."
 
                 # Check if result contains image paths (Figma or validation screenshots)
                 result_str = str(result)
@@ -175,7 +266,7 @@ class AgentCore:
                 has_both = app_imgs and figma_only
 
                 if has_both:
-                    # PAIRED COMPARISON: send Figma→App pairs page by page
+                    # PAIRED COMPARISON: send Figma->App pairs page by page
                     # The validator sends them alternating: figma, app, figma, app, ...
                     all_parts.append(types.Part.from_text(
                         text="PAGE-BY-PAGE COMPARISON: For each page below, "
@@ -188,7 +279,6 @@ class AgentCore:
                     while i < len(figma_images):
                         img_path = figma_images[i]
                         is_figma = "validation_screenshots" not in img_path
-                        is_app = "validation_screenshots" in img_path
 
                         # Check if this is a paired sequence (figma then app)
                         if is_figma and i + 1 < len(figma_images) and "validation_screenshots" in figma_images[i + 1]:

@@ -4,7 +4,16 @@
       "Bash(python:*)",
       "Bash(pip install:*)",
       "Bash(ls:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(node -c:*)",
+      "Bash(node -e \"try{require\\(''fs''\\).readFileSync\\(''C:\\\\Users\\\\abrah\\\\Desktop\\\\all-activities\\\\ai-agents\\\\web\\\\static\\\\app.js'',''utf8''\\);new Function\\(require\\(''fs''\\).readFileSync\\(''C:\\\\Users\\\\abrah\\\\Desktop\\\\all-activities\\\\ai-agents\\\\web\\\\static\\\\app.js'',''utf8''\\)\\);console.log\\(''app.js: OK''\\)}catch\\(e\\){console.log\\(''ERROR:'',e.message\\)}\")",
+      "Bash(node -e \"try{new Function\\(require\\(''fs''\\).readFileSync\\(''C:\\\\Users\\\\abrah\\\\Desktop\\\\all-activities\\\\ai-agents\\\\web\\\\static\\\\app.js'',''utf8''\\)\\);console.log\\(''app.js: syntax OK''\\)}catch\\(e\\){console.log\\(''SYNTAX ERROR:'',e.message\\)}\")",
+      "Bash(node -e:*)",
+      "Bash(findstr:*)",
+      "Bash(dir:*)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

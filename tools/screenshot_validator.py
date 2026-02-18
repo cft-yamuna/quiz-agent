@@ -24,12 +24,16 @@ def extract_routes_from_app(project_name: str) -> list:
     with open(app_jsx, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Match <Route path="..." /> patterns
+    # Match <Route path="..." /> patterns (string literals)
     routes = re.findall(r'<Route\s+[^>]*path\s*=\s*["\']([^"\']+)["\']', content)
 
-    # Also match path="..." in any route-like component
+    # Also match JSX expression paths: path={"/quiz"}
+    routes += re.findall(r'<Route\s+[^>]*path\s*=\s*\{\s*["\']([^"\']+)["\']\s*\}', content)
+
+    # Fallback: match path="..." or path={"/..."} in any route-like component
     if not routes:
         routes = re.findall(r'path\s*[=:]\s*["\']([^"\']+)["\']', content)
+        routes += re.findall(r'path\s*=\s*\{\s*["\']([^"\']+)["\']\s*\}', content)
 
     # Ensure "/" is always first
     if "/" not in routes:
@@ -47,6 +51,74 @@ def extract_routes_from_app(project_name: str) -> list:
             unique.append(r)
 
     return unique
+
+
+def _fuzzy_match_score(frame_name: str, route_path: str) -> float:
+    """
+    Score how well a Figma frame name matches a route path.
+    Higher score = better match. Returns 0 if no match.
+    """
+    # Normalize both strings
+    frame_lower = frame_name.lower().replace("-", " ").replace("_", " ")
+    route_lower = route_path.lower().strip("/").replace("-", " ").replace("_", " ")
+
+    # Exact match on route segment
+    if route_lower == "" and any(w in frame_lower for w in ["home", "start", "welcome", "landing", "main"]):
+        return 1.0
+    if route_lower and route_lower in frame_lower:
+        return 0.9
+    if route_lower and frame_lower in route_lower:
+        return 0.8
+
+    # Word overlap
+    frame_words = set(frame_lower.split())
+    route_words = set(route_lower.split()) if route_lower else set()
+    if route_words and frame_words:
+        overlap = frame_words & route_words
+        if overlap:
+            return 0.5 + 0.3 * (len(overlap) / max(len(frame_words), len(route_words)))
+
+    return 0.0
+
+
+def _pair_frames_to_routes(app_routes: list, figma_frames: list) -> list:
+    """
+    Match Figma frames to app routes by name similarity instead of positional index.
+    Returns list of (route_index, frame_index) tuples for matched pairs.
+    """
+    if not app_routes or not figma_frames:
+        return []
+
+    # Build score matrix
+    pairs = []
+    used_routes = set()
+    used_frames = set()
+
+    # First pass: find strong matches
+    scores = []
+    for fi, frame in enumerate(figma_frames):
+        for ri, route in enumerate(app_routes):
+            score = _fuzzy_match_score(frame.get("name", ""), route)
+            if score > 0:
+                scores.append((score, ri, fi))
+
+    # Sort by score descending, greedily assign
+    scores.sort(reverse=True)
+    for score, ri, fi in scores:
+        if ri not in used_routes and fi not in used_frames:
+            pairs.append((ri, fi))
+            used_routes.add(ri)
+            used_frames.add(fi)
+
+    # Second pass: positional fallback for unmatched items
+    unmatched_routes = [i for i in range(len(app_routes)) if i not in used_routes]
+    unmatched_frames = [i for i in range(len(figma_frames)) if i not in used_frames]
+    for ri, fi in zip(unmatched_routes, unmatched_frames):
+        pairs.append((ri, fi))
+
+    # Sort by route index for consistent ordering
+    pairs.sort(key=lambda p: p[0])
+    return pairs
 
 
 def take_screenshots(
@@ -68,7 +140,11 @@ def take_screenshots(
     except ImportError:
         return {
             "screenshots": {},
-            "errors": ["Playwright not installed. Run: pip install playwright && playwright install chromium"],
+            "errors": [
+                "Playwright is not installed. To enable screenshot validation, run:\n"
+                "  pip install playwright && playwright install chromium\n"
+                "Skipping visual comparison for now."
+            ],
         }
 
     # Auto-detect routes if not provided
@@ -93,7 +169,7 @@ def take_screenshots(
                 screenshot_path = os.path.join(project_screenshots, f"{safe_name}.png")
 
                 try:
-                    page.goto(url, wait_until="networkidle", timeout=15000)
+                    page.goto(url, wait_until="domcontentloaded", timeout=15000)
                     # Wait for animations/transitions to settle
                     page.wait_for_timeout(1500)
                     page.screenshot(path=screenshot_path, full_page=True)
@@ -169,7 +245,7 @@ def validate(project_name: str, routes: list = None) -> dict:
     Full validation flow:
     1. Take app screenshots via Playwright (one per route)
     2. Get Figma frame metadata with screenshot paths
-    3. Build page-by-page comparison pairs
+    3. Build page-by-page comparison pairs (matched by name similarity)
     4. Return structured data for the agent to compare
 
     Returns dict with:
@@ -187,40 +263,43 @@ def validate(project_name: str, routes: list = None) -> dict:
     # 2. Get Figma frame metadata
     figma_frames = get_figma_frame_metadata()  # [{id, name, page, image_path}, ...]
 
-    # 3. Build page-by-page pairs
-    # Strategy: pair by order (frame 1 = route 1, frame 2 = route 2, etc.)
-    # since Figma frames and app routes are usually in the same order
+    # 3. Build page-by-page pairs using fuzzy name matching
     app_routes = list(app_shots.keys())
+    matched_pairs = _pair_frames_to_routes(app_routes, figma_frames)
+
     pairs = []
     all_image_paths = []
+    matched_route_indices = set()
+    matched_frame_indices = set()
 
-    num_pairs = min(len(app_routes), len(figma_frames))
-    for i in range(num_pairs):
-        route = app_routes[i]
-        frame = figma_frames[i]
+    for idx, (ri, fi) in enumerate(matched_pairs):
+        route = app_routes[ri]
+        frame = figma_frames[fi]
         pair = {
-            "index": i + 1,
+            "index": idx + 1,
             "app_route": route,
             "app_image": app_shots[route],
             "figma_name": frame["name"],
             "figma_image": frame["image_path"],
         }
         pairs.append(pair)
+        matched_route_indices.add(ri)
+        matched_frame_indices.add(fi)
         # Alternate: figma first, then app — so agent sees "target" then "actual"
         all_image_paths.append(frame["image_path"])
         all_image_paths.append(app_shots[route])
 
     # Add unpaired app screenshots (extra routes not in Figma)
-    for i in range(num_pairs, len(app_routes)):
-        route = app_routes[i]
-        all_image_paths.append(app_shots[route])
+    for i, route in enumerate(app_routes):
+        if i not in matched_route_indices:
+            all_image_paths.append(app_shots[route])
 
     # Add unpaired Figma frames (pages not built yet)
     unpaired_figma = []
-    for i in range(num_pairs, len(figma_frames)):
-        frame = figma_frames[i]
-        unpaired_figma.append(frame)
-        all_image_paths.append(frame["image_path"])
+    for i, frame in enumerate(figma_frames):
+        if i not in matched_frame_indices:
+            unpaired_figma.append(frame)
+            all_image_paths.append(frame["image_path"])
 
     # 4. Build report
     lines = []
@@ -244,17 +323,18 @@ def validate(project_name: str, routes: list = None) -> dict:
         lines.append("")
 
     # Report extra app routes not matched to Figma
-    if len(app_routes) > num_pairs:
+    unmatched_routes = [app_routes[i] for i in range(len(app_routes)) if i not in matched_route_indices]
+    if unmatched_routes:
         lines.append("### Extra App Routes (no matching Figma frame)")
-        for i in range(num_pairs, len(app_routes)):
-            lines.append(f"  - {app_routes[i]} → {os.path.basename(app_shots[app_routes[i]])}")
+        for route in unmatched_routes:
+            lines.append(f"  - {route} -> {os.path.basename(app_shots[route])}")
         lines.append("")
 
     # Report missing Figma frames (not built)
     if unpaired_figma:
         lines.append("### MISSING: Figma frames NOT built in the app")
         for frame in unpaired_figma:
-            lines.append(f"  - \"{frame['name']}\" (id: {frame['id']}) — THIS PAGE IS MISSING, BUILD IT!")
+            lines.append(f"  - \"{frame['name']}\" (id: {frame['id']}) -- THIS PAGE IS MISSING, BUILD IT!")
         lines.append("")
 
     if errors:

@@ -41,4 +41,57 @@ QUIZ_UX_GUIDELINES = """
 - Use useCallback for event handlers passed to child components
 - Lazy load the Results component (React.lazy + Suspense)
 - All quiz data embedded in JS modules (no fetch calls needed)
+
+### Smart Input Validation & Common Sense UX
+Every user-facing input MUST have proper validation. Do NOT leave inputs unvalidated. Apply these automatically without being asked:
+
+#### Email Fields
+- Must contain `@` and at least one `.` after the `@`
+- Show inline error: "Please enter a valid email address" on blur or submit
+- Use `type="email"` on the input element
+- Regex: `/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/`
+
+#### Name / Text Fields
+- Must not be empty or whitespace-only (trim before checking)
+- Minimum length check where appropriate (e.g., name >= 2 characters)
+- Show inline error: "This field is required"
+
+#### Number / Score Fields
+- Validate min and max range (e.g., age 1-120, score 0-100)
+- Prevent non-numeric input with `type="number"` or input filtering
+- Show inline error: "Please enter a number between X and Y"
+
+#### Password Fields (if applicable)
+- Minimum 8 characters
+- Show strength indicator or requirements list
+- Show/hide password toggle
+
+#### Phone Number Fields (if applicable)
+- Must contain only digits, spaces, dashes, parentheses, or +
+- Minimum 7 digits
+- Show inline error: "Please enter a valid phone number"
+
+#### General Validation Rules
+- ALWAYS validate on blur (when user leaves the field) AND on form submit
+- Show errors inline below the input (red text, ~13px, with red left border or icon)
+- Disable submit button while form has errors
+- Highlight invalid fields with a red border (`border-color: #e53e3e`)
+- Use `aria-invalid="true"` and `aria-describedby` pointing to the error message for accessibility
+- Clear the error when the user starts typing again in that field
+- Prevent form submission if ANY required field is empty or invalid
+- Show helpful placeholder text (e.g., "you@example.com", "Enter your name")
+
+#### Quiz-Specific Validation
+- Timer inputs: must be a positive number, reasonable range (1-120 minutes)
+- Question count: must be between 1 and the total available questions
+- User answer inputs (fill-in-the-blank): trim whitespace, case-insensitive comparison
+- Rating scales: ensure a selection is made before proceeding
+
+#### Error Display Pattern (React)
+```jsx
+const [errors, setErrors] = useState({});
+// On each input: show error below it
+{errors.email && <span className="field-error">{errors.email}</span>}
+// CSS: .field-error { color: #e53e3e; font-size: 13px; margin-top: 4px; }
+```
 """
