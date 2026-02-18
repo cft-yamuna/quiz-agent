@@ -3,7 +3,7 @@ from knowledge.quiz_templates import ALL_TEMPLATES
 from knowledge.best_practices import QUIZ_UX_GUIDELINES
 
 
-def build_system_prompt(memory_context: str, figma_mode: str = "none") -> str:
+def build_system_prompt(memory_context: str, figma_mode: str = "none", use_mcp: bool = False) -> str:
     """Build the system prompt with injected memory context and knowledge.
 
     Args:
@@ -12,11 +12,12 @@ def build_system_prompt(memory_context: str, figma_mode: str = "none") -> str:
             - "active": Figma configured AND design-heavy task. Full Figma instructions.
             - "available": Figma configured but task is not design-focused. Brief reminder.
             - "none": No Figma configured. Generic design quality guidance.
+        use_mcp: If True, MCP Figma server is configured for better design data.
     """
 
     templates_summary = _format_templates()
-    figma_section = _build_figma_section(figma_mode)
-    process_section = _build_process_section(figma_mode)
+    figma_section = _build_figma_section(figma_mode, use_mcp)
+    process_section = _build_process_section(figma_mode, use_mcp)
 
     return f"""You are an expert quiz application builder agent.
 
@@ -81,7 +82,7 @@ output/<project_name>/
 When you are done building, use preview_app to let the user see their quiz. Always end with a summary of what was built and how to run it (npm install && npm run dev)."""
 
 
-def _build_figma_section(figma_mode: str) -> str:
+def _build_figma_section(figma_mode: str, use_mcp: bool = False) -> str:
     """Build the Figma integration section based on mode."""
 
     if figma_mode == "none":
@@ -95,19 +96,39 @@ When building UI, apply strong visual design principles:
 - Create a professional-looking interface with attention to visual detail"""
 
     if figma_mode == "available":
-        return """## Figma Integration (Available)
-A Figma design file is connected. If this task involves any UI or visual work, call **fetch_figma_design** to get the design specs and frame screenshots. Match the design as closely as possible.
+        mcp_note = ""
+        if use_mcp:
+            mcp_note = "\nAn MCP design server is also available — use **fetch_figma_mcp** for higher-fidelity, LLM-optimized design data."
+        return f"""## Figma Integration (Available)
+A Figma design file is connected. If this task involves any UI or visual work, call **fetch_figma_design** to get the design specs and frame screenshots. Match the design as closely as possible.{mcp_note}
 After building, call **validate_screenshots** to compare your app against the Figma design and fix any differences."""
 
     # figma_mode == "active" — full mandatory instructions
-    return """## Figma Integration — MANDATORY DESIGN-DRIVEN BUILDING
+    fetch_tool = "fetch_figma_mcp" if use_mcp else "fetch_figma_design"
+    mcp_note = ""
+    if use_mcp:
+        mcp_note = (
+            "\n\n### MCP Design Server (Active)\n"
+            "An MCP Figma server is configured. Use **fetch_figma_mcp** instead of fetch_figma_design "
+            "for LLM-optimized design data that produces more accurate UI code."
+        )
+
+    return f"""## Figma Integration — MANDATORY DESIGN-DRIVEN BUILDING
 A Figma design file is connected and this is a design/UI task. You MUST use the Figma design as the source of truth. This is NOT optional.
 
 ### CRITICAL: Fetch Design FIRST
-1. Call fetch_figma_design FIRST — BEFORE writing ANY code. This returns design specs, text content, interactive elements, and screenshots.
+1. Call **{fetch_tool}** FIRST — BEFORE writing ANY code. This returns design specs, text content, interactive elements, and screenshots.
 2. Study the frame screenshots — they show EXACTLY what each page/screen must look like.
 3. Each FRAME in Figma = one PAGE/SCREEN in your React app. Build ALL of them.
-4. Do NOT start coding until you have fetched and studied the design specs.
+4. Do NOT start coding until you have fetched and studied the design specs.{mcp_note}
+
+### CRITICAL: Analyze Flow BEFORE Building
+After fetching the design, call **analyze_flow** to determine the app's screen navigation flow.
+- This analyzes frame order and button text to determine how screens connect (e.g., Home → Quiz → Results).
+- The flow is presented to the user for review and editing.
+- The user may add missing screens, correct transitions, or provide additional context.
+- Use the CONFIRMED flow to determine React Router routes, component structure, and navigation logic.
+- Do NOT start building until the flow is confirmed by the user.
 
 ### Using Text Content
 - The "Text Content" section lists EVERY text string from the Figma. Use them VERBATIM — do NOT rewrite or paraphrase.
@@ -156,22 +177,25 @@ The design specs include CSS-ready flexbox properties for every container. Apply
 - **background colors/gradients**: Match exactly.
 
 ### ENFORCEMENT
-If you start writing React code before calling fetch_figma_design, you are doing it WRONG.
+If you start writing React code before calling {fetch_tool}, you are doing it WRONG.
 The design is the source of truth. Your code must serve the design, not the other way around."""
 
 
-def _build_process_section(figma_mode: str) -> str:
+def _build_process_section(figma_mode: str, use_mcp: bool = False) -> str:
     """Build the process flow section based on Figma mode."""
 
+    fetch_tool = "fetch_figma_mcp" if use_mcp else "fetch_figma_design"
+
     if figma_mode == "active":
-        return """## Your Process
-1. DESIGN: Call fetch_figma_design to get the design specs and screenshots. Study every frame carefully. This is MANDATORY.
-2. PLAN: List ALL pages/screens from the Figma design. Analyze the user's brief. Use plan_tasks to create a task for EACH screen/page.
-3. SEARCH: Check memory for similar past projects or relevant patterns using search_memory.
-4. BUILD: Use **create_files** (batch) to generate ALL React files at once — package.json, vite.config.js, index.html, all src/ files, ALL components for EVERY page, data, hooks. Create as many files as possible in a single create_files call.
-5. INSTALL: Run `cd output/<project_name> && npm install` to install dependencies.
-6. START DEV SERVER: Run `cd output/<project_name> && npm run dev` to start the dev server (runs in background on port 5173).
-7. VISUAL VALIDATION (Playwright): This is CRITICAL. Call **validate_screenshots** with the project name. This tool:
+        return f"""## Your Process
+1. DESIGN: Call **{fetch_tool}** to get the design specs and screenshots. Study every frame carefully. This is MANDATORY.
+2. FLOW ANALYSIS: Call **analyze_flow** to determine the app's screen navigation flow. This analyzes frames and buttons to determine how screens connect. Review the flow with the user — they can edit or correct it. Wait for confirmation before proceeding.
+3. PLAN: Use the CONFIRMED flow to plan tasks. Use plan_tasks to create a task for EACH screen from the flow. React Router routes must match the confirmed flow.
+4. SEARCH: Check memory for similar past projects or relevant patterns using search_memory.
+5. BUILD: Use **create_files** (batch) to generate ALL React files at once — package.json, vite.config.js, index.html, all src/ files, ALL components for EVERY screen in the confirmed flow, data, hooks. Create as many files as possible in a single create_files call.
+6. INSTALL: Run `cd output/<project_name> && npm install` to install dependencies.
+7. START DEV SERVER: Run `cd output/<project_name> && npm run dev` to start the dev server (runs in background on port 5173).
+8. VISUAL VALIDATION (Playwright): This is CRITICAL. Call **validate_screenshots** with the project name. This tool:
    - Uses Playwright to take screenshots of EVERY page of the running app
    - Loads the Figma design screenshots from cache
    - Sends BOTH sets of screenshots to you for visual comparison
@@ -183,20 +207,22 @@ def _build_process_section(figma_mode: str) -> str:
    - SHADOWS: missing or wrong box-shadow?
    - CONTENT: missing text, wrong text, missing elements?
    - SIZING: wrong width, height, or proportions?
-8. FIX: Fix ALL differences found in the visual comparison. Use create_file for targeted CSS/component fixes.
-9. RE-VALIDATE: After fixing, call validate_screenshots AGAIN to verify the fixes. Repeat steps 7-9 until the app matches the Figma design.
-10. SAVE: Save project metadata and learnings to memory using save_memory."""
+9. FIX: Fix ALL differences found in the visual comparison. Use create_file for targeted CSS/component fixes.
+10. RE-VALIDATE: After fixing, call validate_screenshots AGAIN to verify the fixes. Repeat steps 8-10 until the app matches the Figma design.
+11. SAVE: Save project metadata and learnings to memory using save_memory."""
 
     if figma_mode == "available":
-        return """## Your Process
-1. DESIGN: A Figma file is connected. If this task involves UI work, call fetch_figma_design to get design specs and screenshots.
-2. PLAN: Analyze the user's brief. Use plan_tasks to create a task for each screen/page.
-3. SEARCH: Check memory for similar past projects or relevant patterns using search_memory.
-4. BUILD: Use **create_files** (batch) to generate ALL React files at once.
-5. INSTALL: Run `cd output/<project_name> && npm install` to install dependencies.
-6. START DEV SERVER: Run `cd output/<project_name> && npm run dev` to start the dev server.
-7. VALIDATE: If you used Figma specs, call **validate_screenshots** to compare the app against the design. Fix any differences.
-8. SAVE: Save project metadata and learnings to memory using save_memory."""
+        mcp_note = f" Use **{fetch_tool}** for better design data." if use_mcp else ""
+        return f"""## Your Process
+1. DESIGN: A Figma file is connected. If this task involves UI work, call fetch_figma_design to get design specs and screenshots.{mcp_note}
+2. FLOW ANALYSIS: If you fetched a Figma design, call **analyze_flow** to determine screen navigation. Review the flow with the user before building.
+3. PLAN: Analyze the user's brief. Use plan_tasks to create a task for each screen/page.
+4. SEARCH: Check memory for similar past projects or relevant patterns using search_memory.
+5. BUILD: Use **create_files** (batch) to generate ALL React files at once.
+6. INSTALL: Run `cd output/<project_name> && npm install` to install dependencies.
+7. START DEV SERVER: Run `cd output/<project_name> && npm run dev` to start the dev server.
+8. VALIDATE: If you used Figma specs, call **validate_screenshots** to compare the app against the design. Fix any differences.
+9. SAVE: Save project metadata and learnings to memory using save_memory."""
 
     # figma_mode == "none"
     return """## Your Process

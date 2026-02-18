@@ -7,7 +7,7 @@ from tools.definitions import TOOL_DEFINITIONS
 from tools.executor import execute_tool, set_dependencies
 from agent.models import select_model
 from agent.prompts import build_system_prompt
-from agent.intent import has_design_intent, is_figma_configured
+from agent.intent import has_design_intent, is_figma_configured, is_mcp_configured
 from memory.manager import MemoryManager
 from planner.task_planner import TaskPlanner
 
@@ -60,9 +60,10 @@ class AgentCore:
             figma_mode = "available"
         else:
             figma_mode = "none"
-        print(f"  Figma mode: {figma_mode}")
+        use_mcp = is_mcp_configured()
+        print(f"  Figma mode: {figma_mode}" + (" (MCP)" if use_mcp else ""))
 
-        system_prompt = build_system_prompt(memory_context, figma_mode=figma_mode)
+        system_prompt = build_system_prompt(memory_context, figma_mode=figma_mode, use_mcp=use_mcp)
 
         model_name = select_model(self.planner.current_phase())
         print(f"  Using model: {model_name}")

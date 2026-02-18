@@ -413,6 +413,74 @@ def _format_specs(specs: dict) -> str:
     return "\n".join(lines)
 
 
+def extract_frames_summary(figma_data: dict) -> tuple:
+    """
+    Extract frame metadata and interactive elements in a structured format
+    suitable for flow analysis.
+
+    Returns:
+        (frames, interactive_elements) where:
+        - frames: list of {"id", "name", "page", "x", "y", "width", "height"}
+        - interactive_elements: list of {"name", "text", "frame", "type"}
+    """
+    document = figma_data.get("document", {})
+    pages = document.get("children", [])
+
+    frames = []
+    interactive_elements = []
+
+    for page in pages:
+        page_name = page.get("name", "")
+        for frame_node in page.get("children", []):
+            if frame_node.get("type") != "FRAME":
+                continue
+
+            bbox = frame_node.get("absoluteBoundingBox", {})
+            frames.append({
+                "id": frame_node.get("id", ""),
+                "name": frame_node.get("name", ""),
+                "page": page_name,
+                "x": bbox.get("x", 0),
+                "y": bbox.get("y", 0),
+                "width": round(bbox.get("width", 0)),
+                "height": round(bbox.get("height", 0)),
+            })
+
+            # Collect interactive elements from this frame
+            _collect_interactive(frame_node, frame_node.get("name", ""), interactive_elements)
+
+    # Sort frames by position: top-to-bottom, then left-to-right
+    frames.sort(key=lambda f: (round(f["y"] / 100), f["x"]))
+
+    return frames, interactive_elements
+
+
+def _collect_interactive(node: dict, frame_name: str, elements: list, depth: int = 0):
+    """Recursively collect interactive elements from a node tree."""
+    if depth > 8:
+        return
+
+    name_lower = node.get("name", "").lower()
+    is_interactive = (
+        any(kw in name_lower for kw in BUTTON_KEYWORDS)
+        or node.get("type") == "INSTANCE"
+        or (node.get("cornerRadius") and node.get("fills") and _has_text_child(node))
+    )
+
+    if is_interactive and depth > 0:
+        text = _get_all_text(node)
+        if text:
+            elements.append({
+                "name": node.get("name", ""),
+                "text": text,
+                "frame": frame_name,
+                "type": "button" if any(kw in name_lower for kw in {"button", "btn", "cta"}) else "clickable",
+            })
+
+    for child in node.get("children", []):
+        _collect_interactive(child, frame_name, elements, depth + 1)
+
+
 def _format_frame(frame: dict, lines: list, indent: int = 0):
     """Recursively format a frame into readable text with CSS-ready values."""
     prefix = "  " * indent

@@ -301,4 +301,42 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     },
+    {
+        "name": "analyze_flow",
+        "description": (
+            "Analyze Figma design frames to determine the app's screen flow and navigation. "
+            "Call this AFTER fetch_figma_design. Analyzes frame order and button text to determine "
+            "how screens connect (e.g., Home -> Quiz -> Results). Returns a flow description that "
+            "is presented to the user for review and editing before building. "
+            "The confirmed flow guides React Router routes and component structure."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_figma_mcp",
+        "description": (
+            "Fetch design data from Figma using the MCP server for LLM-optimized output. "
+            "Returns simplified, AI-friendly design specifications that produce better UI code. "
+            "Falls back to standard fetch_figma_design if MCP server is not configured. "
+            "Use this instead of fetch_figma_design when available for higher-fidelity UI generation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "figma_url": {
+                    "type": "string",
+                    "description": "Figma file URL (uses .env FIGMA_URL if not provided)",
+                },
+                "node_id": {
+                    "type": "string",
+                    "description": "Optional: specific node/frame ID to fetch",
+                },
+            },
+            "required": [],
+        },
+    },
 ]

@@ -3,7 +3,7 @@ import subprocess
 
 from tools.safety import validate_path, validate_command
 from figma.client import FigmaClient
-from figma.parser import extract_design_specs
+from figma.parser import extract_design_specs, extract_frames_summary
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -45,6 +45,8 @@ def execute_tool(name: str, inputs: dict) -> str:
         "check_existing_projects": _handle_check_existing_projects,
         "fetch_figma_design": _handle_fetch_figma_design,
         "validate_screenshots": _handle_validate_screenshots,
+        "analyze_flow": _handle_analyze_flow,
+        "fetch_figma_mcp": _handle_fetch_figma_mcp,
     }
 
     handler = handlers.get(name)
@@ -479,3 +481,177 @@ def _handle_fetch_figma_design(inputs: dict) -> str:
         specs = specs[:15000] + "\n... (truncated)"
 
     return specs
+
+
+def _handle_analyze_flow(inputs: dict) -> str:
+    """Analyze Figma frames to determine app screen flow and navigation."""
+    import json
+    from figma.flow_analyzer import analyze_flow, save_confirmed_flow
+
+    # Load cached Figma data
+    token = os.environ.get("FIGMA_ACCESS_TOKEN")
+    figma_url = os.environ.get("FIGMA_URL") or os.environ.get("FIGMA_FILE_KEY")
+    if not token or not figma_url:
+        return "ERROR: Figma is not configured. Call fetch_figma_design first."
+
+    client = FigmaClient()
+    try:
+        figma_data = client.get_file()
+    except Exception as e:
+        return f"ERROR: Could not load Figma data: {e}"
+
+    # Extract structured frame + interactive element data
+    frames, interactive_elements = extract_frames_summary(figma_data)
+
+    if not frames:
+        return "ERROR: No frames found in the Figma design. Make sure the Figma URL points to a page with frames."
+
+    # Analyze the flow
+    flow = analyze_flow(frames, interactive_elements)
+
+    # Present to user for editing
+    flow_text = flow["flow_text"]
+    prompt = (
+        f"{flow_text}\n\n"
+        "---\n"
+        "Review the flow above. You can:\n"
+        "  - Press Enter to CONFIRM this flow as-is\n"
+        "  - Type corrections to edit the flow (e.g., 'Add a Settings screen after Results')\n"
+        "  - Describe a different flow entirely\n\n"
+        "Your input:"
+    )
+
+    # Ask user via the configured ask_user mechanism
+    if _ask_user_fn:
+        user_response = _ask_user_fn(prompt)
+    else:
+        print(f"\n{prompt}")
+        try:
+            user_response = input("  You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            user_response = ""
+
+    # If user provided edits, include them in the flow
+    if user_response and user_response.lower() not in ("", "ok", "yes", "confirm", "looks good", "lgtm"):
+        flow["user_edits"] = user_response
+        flow["flow_text"] += f"\n\nUSER EDITS:\n{user_response}"
+
+    # Save confirmed flow for use during BUILD phase
+    save_confirmed_flow(flow)
+
+    result = (
+        "Flow analysis confirmed.\n\n"
+        f"{flow['flow_text']}\n\n"
+        f"Screens: {len(flow['screens'])}\n"
+        f"Transitions: {len(flow['transitions'])}\n"
+    )
+
+    if flow.get("user_edits"):
+        result += f"\nUser requested changes: {flow['user_edits']}\n"
+
+    result += (
+        "\nUse this confirmed flow to:\n"
+        "  1. Create React Router routes matching each screen\n"
+        "  2. Build components for each screen\n"
+        "  3. Wire up navigation based on the transitions above"
+    )
+
+    return result
+
+
+def _handle_fetch_figma_mcp(inputs: dict) -> str:
+    """Fetch Figma design data via MCP server for LLM-optimized output."""
+    from mcp.config import is_mcp_configured, get_figma_mcp_config
+
+    if not is_mcp_configured():
+        # Fall back to standard fetch_figma_design
+        print("  [MCP] Not configured, falling back to fetch_figma_design")
+        return _handle_fetch_figma_design(inputs)
+
+    config = get_figma_mcp_config()
+
+    # Determine the Figma URL to fetch
+    figma_url = inputs.get("figma_url", "") or os.environ.get("FIGMA_URL", "")
+    if not figma_url:
+        return "ERROR: No Figma URL provided and FIGMA_URL not set in .env"
+
+    node_id = inputs.get("node_id", "")
+
+    # Start MCP server and fetch design data
+    from mcp.client import MCPClient, MCPError
+
+    mcp_result = ""
+    try:
+        client = MCPClient(config["command"], config["args"])
+        client.start()
+
+        # List available tools to find the right one
+        tools = client.list_tools()
+        tool_names = [t.get("name", "") for t in tools]
+        print(f"  [MCP] Available tools: {tool_names}")
+
+        # Try common Figma MCP tool names
+        mcp_args = {"url": figma_url}
+        if node_id:
+            mcp_args["node_id"] = node_id
+
+        if "get_figma_data" in tool_names:
+            mcp_result = client.call_tool("get_figma_data", mcp_args)
+        elif "get_file" in tool_names:
+            mcp_result = client.call_tool("get_file", {"fileKey": figma_url})
+        elif tools:
+            # Try the first tool as a fallback
+            mcp_result = client.call_tool(tool_names[0], mcp_args)
+
+        client.stop()
+        print(f"  [MCP] Design data fetched ({len(mcp_result)} chars)")
+
+    except MCPError as e:
+        print(f"  [MCP] Error: {e}. Falling back to standard fetch.")
+        return _handle_fetch_figma_design(inputs)
+    except Exception as e:
+        print(f"  [MCP] Unexpected error: {e}. Falling back to standard fetch.")
+        return _handle_fetch_figma_design(inputs)
+
+    # Also export frame screenshots (MCP doesn't provide these)
+    try:
+        figma_client = FigmaClient()
+        frames = figma_client.get_frame_ids()
+        image_paths = {}
+        if frames:
+            frame_ids = [f["id"] for f in frames[:10]]
+            image_paths = figma_client.export_images(frame_ids, scale=1)
+
+        if image_paths:
+            mcp_result += "\n\n## Frame Screenshots (sent as images for visual reference)\n"
+            import json
+            frame_manifest = []
+            for frame in frames[:10]:
+                if frame["id"] in image_paths:
+                    path = image_paths[frame["id"]]
+                    mcp_result += f"  - {frame['name']} ({frame['page']}): {path}\n"
+                    frame_manifest.append({
+                        "id": frame["id"],
+                        "name": frame.get("name", ""),
+                        "page": frame.get("page", ""),
+                        "image_path": path,
+                    })
+
+            mcp_result += "\n__FIGMA_IMAGES__:" + ",".join(image_paths.values())
+
+            # Save frame manifest
+            manifest_path = os.path.join(BASE_DIR, "figma", "cache", "_current_frames.json")
+            try:
+                with open(manifest_path, "w") as f:
+                    json.dump(frame_manifest, f, indent=2)
+            except Exception:
+                pass
+
+    except Exception as e:
+        mcp_result += f"\n\n(Could not export frame screenshots: {e})"
+
+    # Truncate if too large
+    if len(mcp_result) > 15000:
+        mcp_result = mcp_result[:15000] + "\n... (truncated)"
+
+    return mcp_result

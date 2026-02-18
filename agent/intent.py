@@ -67,6 +67,11 @@ def is_figma_configured() -> bool:
     return has_token and has_url
 
 
+def is_mcp_configured() -> bool:
+    """Check if an MCP Figma server is configured in environment."""
+    return bool(os.environ.get("MCP_FIGMA_COMMAND", "").strip())
+
+
 def add_figma_hint(user_input: str) -> str:
     """
     Append Figma/design hint to user input based on config and intent.
